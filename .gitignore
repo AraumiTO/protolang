@@ -1,0 +1,10 @@
+# JetBrains IDEs
+.idea
+
+# Build artifacts
+/target
+
+# Runtime artifacts
+definitions*/
+gen-*/
+_old*/

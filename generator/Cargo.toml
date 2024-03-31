@@ -1,0 +1,12 @@
+[package]
+name = "protolang-generator"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+itertools = "0.12.1"
+protolang-parser = { path = "../parser" }
+walkdir = "2.5.0"
+regex = "1.10.4"
+once_cell = "1.19.0"

@@ -1,0 +1,9 @@
+[workspace]
+resolver = "2"
+members = [
+  "parser",
+  "generator",
+]
+
+package.edition = "2021"
+package.license = "MIT OR Apache-2.0"
