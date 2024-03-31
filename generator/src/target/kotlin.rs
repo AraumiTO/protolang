@@ -107,7 +107,7 @@ pub fn generate_model_kotlin_code(model: &Model, root_package: Option<&str>) -> 
     builder.push_str("  sealed class ServerBase : ServerInterface {\n");
     builder.push_str("    override lateinit var client: ISpaceClient\n");
     builder.push_str("\n");
-    for method in &model.client_methods {
+    for method in &model.server_methods {
       let params = method.params.iter().map(|it| format!("{}: {}", it.name, convert_type(&it.kind, root_package))).join(", ");
       if !method.comments.is_empty() {
         builder.push_str("    /**\n");

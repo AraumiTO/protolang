@@ -22,7 +22,7 @@ use protolang_parser::hl::Meta;
 use crate::target::kotlin::{generate_enum_kotlin_code, generate_model_kotlin_code, generate_type_kotlin_code};
 use crate::target::protolang::{generate_protolang_code, generate_protolang_code_enum, generate_protolang_code_type};
 
-fn generate_kotlin(root_package: Option<&str>, input_root: &Path, output_root: &Path) {
+fn generate_kotlin(root_package: Option<&str>, module: Option<&str>, input_root: &Path, output_root: &Path) {
   for entry in WalkDir::new(input_root) {
     let entry = entry.unwrap();
     let path = entry.path();
@@ -33,6 +33,26 @@ fn generate_kotlin(root_package: Option<&str>, input_root: &Path, output_root: &
 
     if !entry.file_type().is_file() {
       continue;
+    }
+
+    if !path.extension().is_some_and(|it| it == "proto") {
+      continue;
+    }
+
+    let file_module = get_path_module(relative_path);
+    debug!("Module: {:?}", file_module);
+    let (file_module, module_root) = match file_module {
+      Some(module) => module,
+      None => {
+        error!("File {:?} is not attached to any module", path);
+        todo!();
+      }
+    };
+
+    if let Some(expected_module) = module {
+      if file_module != *expected_module {
+        continue;
+      }
     }
 
     info!("Parsing {:?}...", path);
@@ -81,6 +101,7 @@ fn generate_kotlin(root_package: Option<&str>, input_root: &Path, output_root: &
         _ => continue
       };
 
+      // let relative_path = relative_path.strip_prefix(&module_root).unwrap();
       let relative_path = relative_path.with_file_name(relative_path.file_name().unwrap().to_string_lossy().replace(".proto", ".kt"));
       let output_path = output_root.join(&relative_path);
       let package = relative_path.parent().unwrap().to_string_lossy().replace('/', ".");
@@ -135,6 +156,9 @@ struct ParsedMethodParam {
   pub kind: String
 }
 
+// name -> source root
+pub static MODULES: Lazy<Mutex<HashMap<String, String>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+
 pub static EXISTING_TYPES: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
 pub static MODEL_TYPES: Lazy<Mutex<HashMap<String, String>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
@@ -155,6 +179,10 @@ fn generate_definition_index(input_root: &Path) {
     }
 
     if !entry.file_type().is_file() {
+      continue;
+    }
+
+    if !path.extension().is_some_and(|it| it == "proto") {
       continue;
     }
 
@@ -792,6 +820,10 @@ enum Actions {
 
     #[arg(long)]
     package: Option<String>,
+
+    /// Module to generate sources for
+    #[arg(long)]
+    module: Option<String>,
   }
 }
 
@@ -828,6 +860,13 @@ fn main() {
 
     types.insert("Object".to_owned()); // synthetic
 
+    types.insert("ObjectsData".to_owned());
+    paths.insert("ObjectsData".to_owned(), "jp.assasans.araumi.protocol.codec.ObjectsData".to_owned());
+    types.insert("ObjectsDependencies".to_owned());
+    paths.insert("ObjectsDependencies".to_owned(), "jp.assasans.araumi.protocol.codec.ObjectsDependencies".to_owned());
+    types.insert("ModelData".to_owned());
+    paths.insert("ModelData".to_owned(), "jp.assasans.araumi.protocol.codec.ModelData".to_owned());
+
     types.insert("Resource".to_owned());
     paths.insert("Resource".to_owned(), "jp.assasans.araumi.resources.Resource".to_owned());
     types.insert("SoundResource".to_owned());
@@ -858,9 +897,10 @@ fn main() {
       generate_protolang_model(input, output);
     }
 
-    Actions::GenerateKotlin { input, output, package } => {
+    Actions::GenerateKotlin { input, output, package, module } => {
+      generate_module_index(input);
       generate_definition_index(input);
-      generate_kotlin(package.as_deref(), input, output);
+      generate_kotlin(package.as_deref(), module.as_deref(), input, output);
     }
   }
 
@@ -869,6 +909,50 @@ fn main() {
   // let (_, enum_def) = generate_protolang_enum("TargetingMode");
   // let definition = generate_protolang_code_enum(&enum_def, &[]);
   // info!("{}", definition);
+}
+
+fn generate_module_index(input_root: &Path) {
+  let mut modules = MODULES.lock().unwrap();
+  for entry in WalkDir::new(input_root) {
+    let entry = entry.unwrap();
+    let path = entry.path();
+    let relative_path = path.strip_prefix(input_root).unwrap();
+    if is_path_hidden(relative_path) {
+      continue;
+    }
+
+    if !entry.file_type().is_file() {
+      continue;
+    }
+
+    if path.to_string_lossy().contains("excluded/") {
+      continue;
+    }
+
+    let file_name = path.file_name().unwrap().to_string_lossy();
+    if file_name != "module.yaml" {
+      continue;
+    }
+
+    let module_name = path.parent().unwrap().file_name().unwrap().to_string_lossy().to_string();
+    let sources_root = relative_path.parent().unwrap().to_string_lossy().to_string();
+
+    info!("Found module '{}' ({}) descriptor at {:?}", module_name, sources_root, relative_path);
+    let content = fs::read_to_string(path).unwrap();
+    // debug!("{}", content);
+
+    modules.insert(module_name, sources_root);
+  }
+}
+
+fn get_path_module(relative_path: &Path) -> Option<(String, String)> {
+  let modules = MODULES.lock().unwrap();
+  for (module_name, module_root) in modules.iter() {
+    if relative_path.starts_with(module_root) {
+      return Some((module_name.to_owned(), module_root.to_owned()));
+    }
+  }
+  None
 }
 
 fn is_path_hidden<P: AsRef<Path>>(path: P) -> bool {
