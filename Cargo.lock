@@ -202,6 +202,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "itertools",
+ "lazy_static",
  "once_cell",
  "protolang-parser",
  "regex",

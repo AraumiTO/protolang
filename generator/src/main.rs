@@ -11,6 +11,7 @@ use std::sync::Mutex;
 use clap::{Parser, Subcommand};
 use itertools::Itertools;
 
+use lazy_static::lazy_static;
 use tracing::{debug, error, info, trace};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 use walkdir::WalkDir;
@@ -189,6 +190,20 @@ fn generate_definition_index(input_root: &Path) {
   info!("definition index generated");
 }
 
+lazy_static! {
+  static ref MODEL_CLASS: Regex = Regex::new(r"class (\w+) extends (\w+) implements (\w+)").unwrap();
+  static ref CONSTRUCTOR_REGEX: Regex = Regex::new(r"registerModelConstructorCodec.+\((.+?),\s*false\)\)\);").unwrap();
+
+  static ref MODEL_ID_REGEX: Regex = Regex::new(r"this.modelId = Long.getLong\((?<high>-?(0x)?[0-9a-f]+),(?<low>-?(0x)?[0-9a-f]+)\)").unwrap();
+  static ref MODEL_CONSTRUCTOR_REGEX: Regex = Regex::new(r"registerModelConstructorCodec\(this.modelId,this._protocol.getCodec\((?<codec>.+)\)\)").unwrap();
+  static ref MODEL_METHOD_REGEX: Regex = Regex::new(r"this._(?<method>[A-Za-z0-9_]+)Id = Long.getLong\((?<high>-?(0x)?[0-9a-f]+),(?<low>-?(0x)?[0-9a-f]+)\)").unwrap();
+  static ref MODEL_CLIENT_METHOD_PARAM_REGEX: Regex = Regex::new(r"this._(?<method>[A-Za-z0-9_]+)_(?<param>[A-Za-z0-9_]+)Codec = this._protocol.getCodec\((?<codec>.+)\)").unwrap();
+  static ref MODEL_SERVER_METHOD_PARAM_REGEX: Regex = Regex::new(r"this._(?<method>[A-Za-z0-9_]+)_(?<param>[A-Za-z0-9_]+)Codec = this.protocol.getCodec\((?<codec>.+)\)").unwrap();
+
+  static ref FIELD_REGEX: Regex = Regex::new(r"this.codec_(?<field>[A-Za-z0-9_]+) = param1.getCodec\((?<codec>.+)\)").unwrap();
+  static ref VARIANT_REGEX: Regex = Regex::new(r"case (?<value>\d+):\s*.+\.(?<variant>\w+);").unwrap();
+}
+
 fn generate_model_index(input_root: &Path) {
   info!("generating model index...");
 
@@ -223,8 +238,7 @@ fn generate_model_index(input_root: &Path) {
       continue;
     }
 
-    let model_class = Regex::new(r"class (\w+) extends (\w+) implements (\w+)").unwrap();
-    let captures = model_class.captures(&content).expect("no model class capture");
+    let captures = MODEL_CLASS.captures(&content).expect("no model class capture");
     let model_name = captures.get(1).expect("no model name").as_str();
     let model_base_name = captures.get(2).expect("no model base name").as_str();
 
@@ -275,8 +289,7 @@ fn generate_model_index(input_root: &Path) {
 
     // debug!("{}", content);
 
-    let constructor_regex = Regex::new(r"registerModelConstructorCodec.+\((.+?),\s*false\)\)\);").unwrap();
-    let captures = constructor_regex.captures(&model_base_contents).expect("no model constructor capture");
+    let captures = CONSTRUCTOR_REGEX.captures(&model_base_contents).expect("no model constructor capture");
     let constructor_name = captures.get(1).unwrap().as_str();
 
     let model_name = model_base_name.replace("ModelBase", "Model");
@@ -327,8 +340,7 @@ fn generate_protolang_model(input_root: &Path, output_root: &Path) {
 
     // debug!("{}", content);
 
-    let model_class = Regex::new(r"class (\w+) extends (\w+) implements (\w+)").unwrap();
-    let captures = model_class.captures(&content).expect("no model class capture");
+    let captures = MODEL_CLASS.captures(&content).expect("no model class capture");
     // let model_name = captures.get(1).expect("no model name").as_str();
     let model_base_name = captures.get(2).expect("no model base name").as_str();
     let model_interface_name = captures.get(3).expect("no model interface name").as_str();
@@ -373,16 +385,11 @@ fn generate_protolang_model(input_root: &Path, output_root: &Path) {
     let relative_model_base_path = model_base_path.strip_prefix(input_root).unwrap();
     // debug!("{}", model_base_contents);
 
-    let model_id_regex = Regex::new(r"this.modelId = Long.getLong\((?<high>-?(0x)?[0-9a-f]+),(?<low>-?(0x)?[0-9a-f]+)\)").unwrap();
-    let model_constructor_regex = Regex::new(r"registerModelConstructorCodec\(this.modelId,this._protocol.getCodec\((?<codec>.+)\)\)").unwrap();
-    let model_method_regex = Regex::new(r"this._(?<method>[A-Za-z0-9_]+)Id = Long.getLong\((?<high>-?(0x)?[0-9a-f]+),(?<low>-?(0x)?[0-9a-f]+)\)").unwrap();
-    let model_method_param_regex = Regex::new(r"this._(?<method>[A-Za-z0-9_]+)_(?<param>[A-Za-z0-9_]+)Codec = this._protocol.getCodec\((?<codec>.+)\)").unwrap();
-
-    let captures = model_id_regex.captures(&model_base_contents).expect("no model id");
+    let captures = MODEL_ID_REGEX.captures(&model_base_contents).expect("no model id");
     let model_id = convert_to_id(parse_id_from_dec_or_hex(captures.name("high").unwrap().as_str()), parse_id_from_dec_or_hex(captures.name("low").unwrap().as_str()));
     debug!("model id: {}", model_id);
 
-    let model_constructor = if let Some(captures) = model_constructor_regex.captures(&model_base_contents) {
+    let model_constructor = if let Some(captures) = MODEL_CONSTRUCTOR_REGEX.captures(&model_base_contents) {
       let model_constructor = captures.name("codec").unwrap().as_str();
       debug!("model constructor: {}", model_constructor);
       Some(model_constructor.to_owned())
@@ -391,7 +398,7 @@ fn generate_protolang_model(input_root: &Path, output_root: &Path) {
     };
 
     let mut client_methods = Vec::new();
-    let captures = model_method_regex.captures_iter(&model_base_contents);
+    let captures = MODEL_METHOD_REGEX.captures_iter(&model_base_contents);
     for capture in captures {
       let method_name = capture.name("method").unwrap().as_str();
       let model_id = convert_to_id(parse_id_from_dec_or_hex(capture.name("high").unwrap().as_str()), parse_id_from_dec_or_hex(capture.name("low").unwrap().as_str()));
@@ -404,7 +411,7 @@ fn generate_protolang_model(input_root: &Path, output_root: &Path) {
       });
     }
 
-    let captures = model_method_param_regex.captures_iter(&model_base_contents);
+    let captures = MODEL_CLIENT_METHOD_PARAM_REGEX.captures_iter(&model_base_contents);
     for capture in captures {
       let method_name = capture.name("method").unwrap().as_str();
       let param = capture.name("param").unwrap().as_str();
@@ -424,10 +431,8 @@ fn generate_protolang_model(input_root: &Path, output_root: &Path) {
     let model_server_contents = fs::read_to_string(model_base_path.parent().unwrap().to_path_buf().join(model_server_name + ".as")).unwrap();
     // debug!("{}", model_server_contents);
 
-    let model_method_param_regex = Regex::new(r"this._(?<method>[A-Za-z0-9_]+)_(?<param>[A-Za-z0-9_]+)Codec = this.protocol.getCodec\((?<codec>.+)\)").unwrap();
-
     let mut server_methods = Vec::new();
-    let captures = model_method_regex.captures_iter(&model_server_contents);
+    let captures = MODEL_METHOD_REGEX.captures_iter(&model_server_contents);
     for capture in captures {
       let method_name = capture.name("method").unwrap().as_str();
       let model_id = convert_to_id(parse_id_from_dec_or_hex(capture.name("high").unwrap().as_str()), parse_id_from_dec_or_hex(capture.name("low").unwrap().as_str()));
@@ -440,7 +445,7 @@ fn generate_protolang_model(input_root: &Path, output_root: &Path) {
       });
     }
 
-    let captures = model_method_param_regex.captures_iter(&model_server_contents);
+    let captures = MODEL_SERVER_METHOD_PARAM_REGEX.captures_iter(&model_server_contents);
     for capture in captures {
       let method_name = capture.name("method").unwrap().as_str();
       let param = capture.name("param").unwrap().as_str();
@@ -635,10 +640,8 @@ fn generate_protolang_type(name: &str, input_root: &Path, output_root: &Path) ->
       return None;
     }
 
-    let field_regex = Regex::new(r"this.codec_(?<field>[A-Za-z0-9_]+) = param1.getCodec\((?<codec>.+)\)").unwrap();
-
     let mut fields = Vec::new();
-    let captures = field_regex.captures_iter(&content);
+    let captures = FIELD_REGEX.captures_iter(&content);
     for capture in captures {
       let field_name = capture.name("field").unwrap().as_str();
       let codec = capture.name("codec").unwrap().as_str();
@@ -726,10 +729,8 @@ fn generate_protolang_enum(name: &str, input_root: &Path) -> Option<(PathBuf, hl
       return None;
     }
 
-    let variant_regex = Regex::new(r"case (?<value>\d+):\s*.+\.(?<variant>\w+);").unwrap();
-
     let mut variants = Vec::new();
-    let captures = variant_regex.captures_iter(&content);
+    let captures = VARIANT_REGEX.captures_iter(&content);
     for capture in captures {
       let variant = capture.name("variant").unwrap().as_str();
       let value = capture.name("value").unwrap().as_str().parse::<i64>().unwrap();
@@ -887,36 +888,50 @@ fn parse_id_from_dec_or_hex(value: &str) -> i32 {
   }
 }
 
-fn codec_to_type(codec: &str, is_constructor: bool) -> String {
-  let type_regex = Regex::new(r"new (?:Type|Enum)CodecInfo\((.+?),\s*(false|true)\)").unwrap();
-  let collection_regex = Regex::new(r"new CollectionCodecInfo\((.+?),\s*(false|true)(?:,\s*\d+)?\)").unwrap();
-  let map_regex = Regex::new(r"new MapCodecInfo\((.+?),\s*(.+?),\s*(false|true)\)").unwrap();
+lazy_static! {
+  static ref TYPES_IN_GENERIC_REGEX: Regex = Regex::new(r"<([\w\s,?]+)>").unwrap();
 
-  let codec = type_regex.replace_all(&codec, |captures: &regex::Captures| {
+  static ref TYPE_REGEX: Regex = Regex::new(r"new (?:Type|Enum)CodecInfo\((.+?),\s*(false|true)\)").unwrap();
+  static ref COLLECTION_REGEX: Regex = Regex::new(r"new CollectionCodecInfo\((.+?),\s*(false|true)(?:,\s*\d+)?\)").unwrap();
+  static ref MAP_REGEX: Regex = Regex::new(r"new MapCodecInfo\((.+?),\s*(.+?),\s*(false|true)\)").unwrap();
+
+  static ref REGEX_1: Regex = Regex::new(r"\bBoolean\b").unwrap();
+  static ref REGEX_2: Regex = Regex::new(r"\bByte\b").unwrap();
+  static ref REGEX_3: Regex = Regex::new(r"\bShort\b").unwrap();
+  static ref REGEX_4: Regex = Regex::new(r"\b[Ii]nt\b").unwrap();
+  static ref REGEX_5: Regex = Regex::new(r"\bLong\b").unwrap();
+  static ref REGEX_6: Regex = Regex::new(r"\bFloat\b").unwrap();
+  static ref REGEX_7: Regex = Regex::new(r"\b(Number|Double)\b").unwrap();
+  static ref REGEX_8: Regex = Regex::new(r"\bTanks3DSResource\b").unwrap();
+  static ref REGEX_9: Regex = Regex::new(r"\bDate\b").unwrap();
+}
+
+fn codec_to_type(codec: &str, is_constructor: bool) -> String {
+  let codec = TYPE_REGEX.replace_all(&codec, |captures: &regex::Captures| {
     let inner = captures.get(1).unwrap().as_str();
     let optional = captures.get(2).unwrap().as_str();
     format!("{}{}", inner, if optional == "true" { "?" } else { "" })
   });
-  let codec = collection_regex.replace_all(&codec, |captures: &regex::Captures| {
+  let codec = COLLECTION_REGEX.replace_all(&codec, |captures: &regex::Captures| {
     let inner = captures.get(1).unwrap().as_str();
     let optional = captures.get(2).unwrap().as_str();
     format!("List<{}>{}", inner, if optional == "true" { "?" } else { "" })
   });
-  let codec = map_regex.replace_all(&codec, |captures: &regex::Captures| {
+  let codec = MAP_REGEX.replace_all(&codec, |captures: &regex::Captures| {
     let key = captures.get(1).unwrap().as_str();
     let value = captures.get(2).unwrap().as_str();
     let optional = captures.get(3).unwrap().as_str();
     format!("Map<{}, {}>{}", key, value, if optional == "true" { "?" } else { "" })
   });
-  let codec = Regex::new(r"\bBoolean\b").unwrap().replace_all(&codec, "bool");
-  let codec = Regex::new(r"\bByte\b").unwrap().replace_all(&codec, "i8");
-  let codec = Regex::new(r"\bShort\b").unwrap().replace_all(&codec, "i16");
-  let codec = Regex::new(r"\b[Ii]nt\b").unwrap().replace_all(&codec, "i32");
-  let codec = Regex::new(r"\bLong\b").unwrap().replace_all(&codec, "i64");
-  let codec = Regex::new(r"\bFloat\b").unwrap().replace_all(&codec, "f32");
-  let codec = Regex::new(r"\b(Number|Double)\b").unwrap().replace_all(&codec, "f64");
-  let codec = Regex::new(r"\bTanks3DSResource\b").unwrap().replace_all(&codec, "Object3DResource");
-  let codec = Regex::new(r"\bDate\b").unwrap().replace_all(&codec, "Instant");
+  let codec = REGEX_1.replace_all(&codec, "bool");
+  let codec = REGEX_2.replace_all(&codec, "i8");
+  let codec = REGEX_3.replace_all(&codec, "i16");
+  let codec = REGEX_4.replace_all(&codec, "i32");
+  let codec = REGEX_5.replace_all(&codec, "i64");
+  let codec = REGEX_6.replace_all(&codec, "f32");
+  let codec = REGEX_7.replace_all(&codec, "f64");
+  let codec = REGEX_8.replace_all(&codec, "Object3DResource");
+  let codec = REGEX_9.replace_all(&codec, "Instant");
 
   if !is_constructor {
     // Convert CC to Model.Constructor references
@@ -944,8 +959,7 @@ fn convert_path_to_definition(path: &Path) -> PathBuf {
 }
 
 fn get_types_from_generic(value: &str) -> Vec<String> {
-  let regex = Regex::new(r"<([\w\s,?]+)>").unwrap();
-  let captures = match regex.captures(value) {
+  let captures = match TYPES_IN_GENERIC_REGEX.captures(value) {
     Some(value) => value,
     None => return vec![value.trim().trim_end_matches('?').to_owned()]
   };

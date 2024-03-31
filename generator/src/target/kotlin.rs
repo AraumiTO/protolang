@@ -1,5 +1,6 @@
 use std::fmt::format;
 use itertools::Itertools;
+use lazy_static::lazy_static;
 use protolang_parser::hl::{Enum, Model, Type};
 use regex::Regex;
 
@@ -197,14 +198,24 @@ pub fn generate_enum_kotlin_code(enum_def: &Enum) -> String {
   builder
 }
 
+lazy_static! {
+  static ref REGEX_1: Regex = Regex::new(r"\bbool\b").unwrap();
+  static ref REGEX_2: Regex = Regex::new(r"\bi8\b").unwrap();
+  static ref REGEX_3: Regex = Regex::new(r"\bi16\b").unwrap();
+  static ref REGEX_4: Regex = Regex::new(r"\bi32\b").unwrap();
+  static ref REGEX_5: Regex = Regex::new(r"\bi64\b").unwrap();
+  static ref REGEX_6: Regex = Regex::new(r"\bf32\b").unwrap();
+  static ref REGEX_7: Regex = Regex::new(r"\bf64\b").unwrap();
+}
+
 pub fn convert_type(value: &str) -> String {
-  let value = Regex::new(r"\bbool\b").unwrap().replace_all(&value, "Boolean");
-  let value = Regex::new(r"\bi8\b").unwrap().replace_all(&value, "Byte");
-  let value = Regex::new(r"\bi16\b").unwrap().replace_all(&value, "Short");
-  let value = Regex::new(r"\bi32\b").unwrap().replace_all(&value, "Int");
-  let value = Regex::new(r"\bi64\b").unwrap().replace_all(&value, "Long");
-  let value = Regex::new(r"\bf32\b").unwrap().replace_all(&value, "Float");
-  let value = Regex::new(r"\bf64\b").unwrap().replace_all(&value, "Double");
+  let value = REGEX_1.replace_all(&value, "Boolean");
+  let value = REGEX_2.replace_all(&value, "Byte");
+  let value = REGEX_3.replace_all(&value, "Short");
+  let value = REGEX_4.replace_all(&value, "Int");
+  let value = REGEX_5.replace_all(&value, "Long");
+  let value = REGEX_6.replace_all(&value, "Float");
+  let value = REGEX_7.replace_all(&value, "Double");
 
   let mut cache = REGEX_CACHE.lock().unwrap();
 
