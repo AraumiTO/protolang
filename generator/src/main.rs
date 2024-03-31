@@ -8,6 +8,7 @@ use std::ffi::OsStr;
 use std::ops::Index;
 use std::path::{Component, PathBuf};
 use std::sync::Mutex;
+use clap::{Parser, Subcommand};
 use itertools::Itertools;
 
 use walkdir::WalkDir;
@@ -18,9 +19,7 @@ use protolang_parser::hl::Meta;
 use crate::target::kotlin::{generate_enum_kotlin_code, generate_model_kotlin_code, generate_type_kotlin_code};
 use crate::target::protolang::{generate_protolang_code, generate_protolang_code_enum, generate_protolang_code_type};
 
-fn generate_kotlin() {
-  let input_root = Path::new("definitions2");
-  let output_root = Path::new("gen-kotlin");
+fn generate_kotlin(root_package: Option<&str>, input_root: &Path, output_root: &Path) {
   for entry in WalkDir::new(input_root) {
     let entry = entry.unwrap();
     let path = entry.path();
@@ -84,8 +83,15 @@ fn generate_kotlin() {
       let package = relative_path.parent().unwrap().to_string_lossy().replace('/', ".");
       println!("generate kotlin code into {:?}", output_path);
 
+      let mut full_package = String::new();
+      if let Some(root_package) = root_package {
+        full_package.push_str(root_package);
+        full_package.push_str(".");
+      }
+      full_package.push_str(&package);
+
       let mut wrapped_code = String::new();
-      wrapped_code.push_str(&format!("package {}\n\n", package));
+      wrapped_code.push_str(&format!("package {}\n\n", full_package));
       wrapped_code.push_str("import jp.assasans.araumi.models.*\n");
       wrapped_code.push_str("import jp.assasans.araumi.protocol.codec.wired.*\n");
       wrapped_code.push_str("\n");
@@ -133,8 +139,7 @@ pub static BUILTIN_FQN: Lazy<Mutex<HashMap<String, String>>> = Lazy::new(|| Mute
 pub static DEFINITION_FQN: Lazy<Mutex<HashMap<String, String>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 pub static REGEX_CACHE: Lazy<Mutex<HashMap<String, Regex>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
-fn generate_definition_index() {
-  let input_root = Path::new("definitions2");
+fn generate_definition_index(input_root: &Path) {
   for entry in WalkDir::new(input_root) {
     let entry = entry.unwrap();
     let path = entry.path();
@@ -178,8 +183,7 @@ fn generate_definition_index() {
   }
 }
 
-fn generate_model_index() {
-  let input_root = Path::new("/home/assasans/Araumi/GameClient/");
+fn generate_model_index(input_root: &Path) {
   for entry in WalkDir::new(input_root) {
     let entry = entry.unwrap();
     let path = entry.path();
@@ -279,9 +283,7 @@ fn generate_model_index() {
   }
 }
 
-fn generate_protolang_model() {
-  let input_root = Path::new("/home/assasans/Araumi/GameClient/");
-  let output_root = Path::new("definitions2");
+fn generate_protolang_model(input_root: &Path, output_root: &Path) {
   for entry in WalkDir::new(input_root) {
     let entry = entry.unwrap();
     let path = entry.path();
@@ -452,7 +454,7 @@ fn generate_protolang_model() {
       id: model_id,
       constructor: model_constructor.map(|it| {
         let kind = codec_to_type(&it, true);
-        let (_, type_def) = generate_protolang_type(&kind).unwrap();
+        let (_, type_def) = generate_protolang_type(&kind, input_root, output_root).unwrap();
         hl::ModelConstructor {
           fields: type_def.fields,
           comments: type_def.comments
@@ -494,7 +496,7 @@ fn generate_protolang_model() {
             println!("generating constructor type for {}", name);
 
             let project = relative_model_base_path.components().nth(0).map(|it| it.as_os_str().to_string_lossy()).unwrap().to_string();
-            let (relative_model_base_path, definition) = generate_type_code_for(name, &project);
+            let (relative_model_base_path, definition) = generate_type_code_for(name, &project, input_root, output_root);
             println!("{}", definition);
 
             let relative_model_base_path = relative_model_base_path.with_file_name(relative_model_base_path.file_name().unwrap().to_string_lossy().replacen("Codec", "", 1).replace(".as", ".proto"));
@@ -517,7 +519,7 @@ fn generate_protolang_model() {
 
             // TODO
             let project = relative_model_base_path.components().nth(0).map(|it| it.as_os_str().to_string_lossy()).unwrap().to_string();
-            let (relative_model_base_path, definition) = generate_type_code_for(name, &project);
+            let (relative_model_base_path, definition) = generate_type_code_for(name, &project, input_root, output_root);
             println!("{}", definition);
 
             let relative_model_base_path = relative_model_base_path.with_file_name(relative_model_base_path.file_name().unwrap().to_string_lossy().replacen("Codec", "", 1).replace(".as", ".proto"));
@@ -540,7 +542,7 @@ fn generate_protolang_model() {
 
             // TODO
             let project = relative_model_base_path.components().nth(0).map(|it| it.as_os_str().to_string_lossy()).unwrap().to_string();
-            let (relative_model_base_path, definition) = generate_type_code_for(name, &project);
+            let (relative_model_base_path, definition) = generate_type_code_for(name, &project, input_root, output_root);
             println!("{}", definition);
 
             let relative_model_base_path = relative_model_base_path.with_file_name(relative_model_base_path.file_name().unwrap().to_string_lossy().replacen("Codec", "", 1).replace(".as", ".proto"));
@@ -562,8 +564,8 @@ fn generate_protolang_model() {
   }
 }
 
-fn generate_type_code_for(name: &str, project: &str) -> (PathBuf, String) {
-  match generate_protolang_type(name) {
+fn generate_type_code_for(name: &str, project: &str, input_root: &Path, output_root: &Path) -> (PathBuf, String) {
+  match generate_protolang_type(name, input_root, output_root) {
     Some((relative_path, type_def)) => {
       let definition = generate_protolang_code_type(&type_def, &[
         Meta { key: "client_package".to_owned(), value: format!("{}:{}", project, convert_path_to_definition(&relative_path).parent().unwrap().to_string_lossy().replace('/', ".")) }
@@ -571,7 +573,7 @@ fn generate_type_code_for(name: &str, project: &str) -> (PathBuf, String) {
       (relative_path, definition)
     }
 
-    None => match generate_protolang_enum(name) {
+    None => match generate_protolang_enum(name, input_root) {
       Some((relative_path, enum_def)) => {
         let project = relative_path.components().nth(0).map(|it| it.as_os_str().to_string_lossy()).unwrap();
         let definition = generate_protolang_code_enum(&enum_def, &[
@@ -587,9 +589,7 @@ fn generate_type_code_for(name: &str, project: &str) -> (PathBuf, String) {
   }
 }
 
-fn generate_protolang_type(name: &str) -> Option<(PathBuf, hl::Type)> {
-  let input_root = Path::new("/home/assasans/Araumi/GameClient/");
-  let output_root = Path::new("definitions2");
+fn generate_protolang_type(name: &str, input_root: &Path, output_root: &Path) -> Option<(PathBuf, hl::Type)> {
   for entry in WalkDir::new(input_root) {
     let entry = entry.unwrap();
     let path = entry.path();
@@ -664,7 +664,7 @@ fn generate_protolang_type(name: &str) -> Option<(PathBuf, hl::Type)> {
           println!("generating recursive type for {}", name);
 
           let project = relative_path.components().nth(0).map(|it| it.as_os_str().to_string_lossy()).unwrap().to_string();
-          let (relative_path, definition) = generate_type_code_for(name, &project);
+          let (relative_path, definition) = generate_type_code_for(name, &project, input_root, output_root);
           println!("{}", definition);
 
           let relative_path = relative_path.with_file_name(relative_path.file_name().unwrap().to_string_lossy().replacen("Codec", "", 1).replace(".as", ".proto"));
@@ -681,9 +681,7 @@ fn generate_protolang_type(name: &str) -> Option<(PathBuf, hl::Type)> {
   panic!("cannot find type {}", name);
 }
 
-fn generate_protolang_enum(name: &str) -> Option<(PathBuf, hl::Enum)> {
-  let input_root = Path::new("/home/assasans/Araumi/GameClient/");
-  let output_root = Path::new("definitions2");
+fn generate_protolang_enum(name: &str, input_root: &Path) -> Option<(PathBuf, hl::Enum)> {
   for entry in WalkDir::new(input_root) {
     let entry = entry.unwrap();
     let path = entry.path();
@@ -758,7 +756,35 @@ pub fn wrap_to_u64(x: i64) -> u64 {
   (x as u64).wrapping_add(u64::MAX / 2 + 1)
 }
 
+#[derive(Parser, Debug)]
+#[command(version)]
+struct Args {
+  #[command(subcommand)]
+  command: Actions,
+}
+
+#[derive(Subcommand, Debug)]
+enum Actions {
+  GenerateProtolang {
+    input: PathBuf,
+
+    #[arg(short, long)]
+    output: PathBuf,
+  },
+  GenerateKotlin {
+    input: PathBuf,
+
+    #[arg(short, long)]
+    output: PathBuf,
+
+    #[arg(long)]
+    package: Option<String>,
+  }
+}
+
 fn main() {
+  let args = Args::parse();
+
   {
     let mut types = EXISTING_TYPES.lock().unwrap();
     let mut paths = BUILTIN_FQN.lock().unwrap();
@@ -804,15 +830,21 @@ fn main() {
     paths.insert("Object3DResource".to_owned(), "jp.assasans.araumi.resources.Object3DResource".to_owned());
   }
 
-  // generate_model_index();
-  // let types = MODEL_TYPES.lock().unwrap();
-  // for (constructor_name, model_name) in types.iter() {
-  //   println!("{} -> {}", constructor_name, model_name);
-  // }
+  match &args.command {
+    Actions::GenerateProtolang { input, output } => {
+      generate_model_index(input);
+      let types = MODEL_TYPES.lock().unwrap();
+      for (constructor_name, model_name) in types.iter() {
+        println!("{} -> {}", constructor_name, model_name);
+      }
+      generate_protolang_model(input, output);
+    }
 
-  generate_definition_index();
-  generate_kotlin();
-  // generate_protolang_model();
+    Actions::GenerateKotlin { input, output, package } => {
+      generate_definition_index(input);
+      generate_kotlin(package.as_deref(), input, output);
+    }
+  }
 
   // let (_, type_def) = generate_protolang_type("ExternalAuthParameters");
   // let definition = generate_protolang_code_type(&type_def, &[]);
