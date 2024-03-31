@@ -833,10 +833,10 @@ fn main() {
   match &args.command {
     Actions::GenerateProtolang { input, output } => {
       generate_model_index(input);
-      let types = MODEL_TYPES.lock().unwrap();
-      for (constructor_name, model_name) in types.iter() {
+      for (constructor_name, model_name) in MODEL_TYPES.lock().unwrap().iter() {
         println!("{} -> {}", constructor_name, model_name);
       }
+
       generate_protolang_model(input, output);
     }
 
