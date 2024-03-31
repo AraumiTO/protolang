@@ -32,7 +32,7 @@ abstract class ChatModelBase : Model(),
 }
 */
 
-pub fn generate_model_kotlin_code(model: &Model) -> String {
+pub fn generate_model_kotlin_code(model: &Model, root_package: Option<&str>) -> String {
   let mut builder = String::new();
 
   if !model.comments.is_empty() {
@@ -44,17 +44,21 @@ pub fn generate_model_kotlin_code(model: &Model) -> String {
   }
 
   builder.push_str(&format!("@ModelInfo({})\n", model.id));
-  builder.push_str(&format!("abstract class {}Base : Model(),\n", model.name));
+  builder.push_str(&format!("abstract class {}Base : ", model.name));
+
+  let mut supertypes = Vec::new();
+  supertypes.push("Model()".to_owned());
   if model.constructor.is_some() {
-    builder.push_str("  IConstructableModel,\n");
+    supertypes.push(format!("  IConstructableModel<{}Base.Constructor>", model.name));
   }
   if !model.client_methods.is_empty() {
-    builder.push_str(&format!("  IModelCI<{}Base.Client> by ModelCI(Client::class),\n", model.name));
+    supertypes.push(format!("  IModelCI<{}Base.Client> by ModelCI(Client::class)", model.name));
   }
   if !model.server_methods.is_empty() {
-    builder.push_str(&format!("  IModelSI<{}Base.Server> by ModelSI(ServerBase::class),\n", model.name));
+    supertypes.push(format!("  IModelSI<{}Base.ServerBase> by ModelSI(ServerBase::class)", model.name));
   }
-  builder.push_str("{\n");
+  builder.push_str(&supertypes.join(",\n"));
+  builder.push_str(" {\n");
 
   let mut segments = Vec::new();
   if let Some(constructor) = &model.constructor {
@@ -78,9 +82,9 @@ pub fn generate_model_kotlin_code(model: &Model) -> String {
         }
         builder.push_str("     */\n");
       }
-      builder.push_str(&format!("    @Wire({}) val {}: {},\n", field.position - 1, field.name, convert_type(&field.kind)));
+      builder.push_str(&format!("    @Wire({}) val {}: {},\n", field.position - 1, field.name, convert_type(&field.kind, root_package)));
     }
-    builder.push_str("  )\n");
+    builder.push_str("  ) : ModelConstructor\n");
     segments.push(builder);
   }
 
@@ -89,7 +93,7 @@ pub fn generate_model_kotlin_code(model: &Model) -> String {
 
     builder.push_str("  interface Client : ClientInterface {\n");
     for method in &model.client_methods {
-      let params = method.params.iter().map(|it| format!("{}: {}", it.name, convert_type(&it.kind))).join(", ");
+      let params = method.params.iter().map(|it| format!("{}: {}", it.name, convert_type(&it.kind, root_package))).join(", ");
       builder.push_str(&format!("    @ModelMethod({}) suspend fun {}({})\n", method.id, method.name, params))
     }
     builder.push_str("  }\n");
@@ -104,7 +108,7 @@ pub fn generate_model_kotlin_code(model: &Model) -> String {
     builder.push_str("    override lateinit var client: ISpaceClient\n");
     builder.push_str("\n");
     for method in &model.client_methods {
-      let params = method.params.iter().map(|it| format!("{}: {}", it.name, convert_type(&it.kind))).join(", ");
+      let params = method.params.iter().map(|it| format!("{}: {}", it.name, convert_type(&it.kind, root_package))).join(", ");
       if !method.comments.is_empty() {
         builder.push_str("    /**\n");
         for comment in &method.comments {
@@ -133,7 +137,7 @@ data class SomeConstructor(
   @Wire(1) val antifloodEnabled: Boolean
 )
 */
-pub fn generate_type_kotlin_code(type_def: &Type) -> String {
+pub fn generate_type_kotlin_code(type_def: &Type, root_package: Option<&str>) -> String {
   let mut builder = String::new();
 
   if !type_def.comments.is_empty() {
@@ -154,7 +158,7 @@ pub fn generate_type_kotlin_code(type_def: &Type) -> String {
       }
       builder.push_str("   */\n");
     }
-    builder.push_str(&format!("  @Wire({}) val {}: {},\n", field.position - 1, field.name, convert_type(&field.kind)));
+    builder.push_str(&format!("  @Wire({}) val {}: {},\n", field.position - 1, field.name, convert_type(&field.kind, root_package)));
   }
   builder.push_str(")\n");
 
@@ -169,7 +173,7 @@ enum class BattleTeam(override val value: Int) : IWiredEnum<Int> {
   NONE(2);
 }
 */
-pub fn generate_enum_kotlin_code(enum_def: &Enum) -> String {
+pub fn generate_enum_kotlin_code(enum_def: &Enum, root_package: Option<&str>) -> String {
   let mut builder = String::new();
 
   if !enum_def.comments.is_empty() {
@@ -180,7 +184,7 @@ pub fn generate_enum_kotlin_code(enum_def: &Enum) -> String {
     builder.push_str(" */\n");
   }
 
-  let repr_converted = convert_type(&enum_def.repr);
+  let repr_converted = convert_type(&enum_def.repr, root_package);
   builder.push_str(&format!("@WiredEnum({}::class)\n", repr_converted));
   builder.push_str(&format!("enum class {}(override val value: {}) : IWiredEnum<{}> {{\n", enum_def.name, repr_converted, repr_converted));
   for variant in &enum_def.variants {
@@ -208,7 +212,7 @@ lazy_static! {
   static ref REGEX_7: Regex = Regex::new(r"\bf64\b").unwrap();
 }
 
-pub fn convert_type(value: &str) -> String {
+pub fn convert_type(value: &str, root_package: Option<&str>) -> String {
   let value = REGEX_1.replace_all(&value, "Boolean");
   let value = REGEX_2.replace_all(&value, "Byte");
   let value = REGEX_3.replace_all(&value, "Short");
@@ -229,8 +233,15 @@ pub fn convert_type(value: &str) -> String {
 
   let definitions = DEFINITION_FQN.lock().unwrap();
   for (simple_name, full_name) in definitions.iter() {
+    let mut full_package = String::new();
+    if let Some(root_package) = root_package {
+      full_package.push_str(root_package);
+      full_package.push_str(".");
+    }
+    full_package.push_str(full_name);
+
     let regex = cache.entry(simple_name.to_owned()).or_insert_with(|| Regex::new(&format!(r"\b{}\b", simple_name)).unwrap());
-    value = regex.replace_all(&value, full_name).to_string();
+    value = regex.replace_all(&value, full_package).to_string();
   }
 
   value.to_string()

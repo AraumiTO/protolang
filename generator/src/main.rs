@@ -64,19 +64,19 @@ fn generate_kotlin(root_package: Option<&str>, input_root: &Path, output_root: &
           let definition = model_to_definition(model).unwrap();
           debug!("{:?}", definition);
 
-          generate_model_kotlin_code(&definition)
+          generate_model_kotlin_code(&definition, root_package)
         },
         ProgramItem::Type(type_def) => {
           let definition = type_to_definition(type_def).unwrap();
           debug!("{:?}", definition);
 
-          generate_type_kotlin_code(&definition)
+          generate_type_kotlin_code(&definition, root_package)
         },
         ProgramItem::Enum(enum_def) => {
           let definition = enum_to_definition(enum_def).unwrap();
           debug!("{:?}", definition);
 
-          generate_enum_kotlin_code(&definition)
+          generate_enum_kotlin_code(&definition, root_package)
         },
         _ => continue
       };
@@ -97,6 +97,7 @@ fn generate_kotlin(root_package: Option<&str>, input_root: &Path, output_root: &
       wrapped_code.push_str(&format!("package {}\n\n", full_package));
       wrapped_code.push_str("import jp.assasans.araumi.models.*\n");
       wrapped_code.push_str("import jp.assasans.araumi.protocol.codec.wired.*\n");
+      wrapped_code.push_str("import jp.assasans.araumi.architecture.spaces.*\n");
       wrapped_code.push_str("\n");
       wrapped_code.push_str(&code);
       debug!("{}", wrapped_code);
