@@ -6,3 +6,5 @@ license.workspace = true
 
 [dependencies]
 itertools = "0.12.1"
+test-log = { version = "0.2.15", default-features = false, features = ["trace", "tracing-subscriber"] }
+tracing = "0.1.40"

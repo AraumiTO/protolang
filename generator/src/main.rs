@@ -11,6 +11,8 @@ use std::sync::Mutex;
 use clap::{Parser, Subcommand};
 use itertools::Itertools;
 
+use tracing::{debug, error, info, trace};
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 use walkdir::WalkDir;
 use protolang_parser::{enum_to_definition, hl, model_to_definition, type_to_definition, ProgramItem};
 use regex::Regex;
@@ -32,17 +34,17 @@ fn generate_kotlin(root_package: Option<&str>, input_root: &Path, output_root: &
       continue;
     }
 
-    println!("Parsing {:?}...", path);
+    info!("Parsing {:?}...", path);
     let content = fs::read_to_string(path).unwrap();
 
     let tokens = protolang_parser::tokenizer(&content).unwrap();
     for token in &tokens {
-      println!("{:?}", token);
+      trace!("{:?}", token);
     }
 
     let mut iter = itertools::multipeek(&tokens);
     let ast = protolang_parser::parse_program(&mut iter).unwrap();
-    println!("{:?}", ast);
+    debug!("{:?}", ast);
 
     let mut meta = Vec::new();
     for item in &ast.body {
@@ -59,19 +61,19 @@ fn generate_kotlin(root_package: Option<&str>, input_root: &Path, output_root: &
       let code = match item {
         ProgramItem::Model(model) => {
           let definition = model_to_definition(model).unwrap();
-          println!("{:?}", definition);
+          debug!("{:?}", definition);
 
           generate_model_kotlin_code(&definition)
         },
         ProgramItem::Type(type_def) => {
           let definition = type_to_definition(type_def).unwrap();
-          println!("{:?}", definition);
+          debug!("{:?}", definition);
 
           generate_type_kotlin_code(&definition)
         },
         ProgramItem::Enum(enum_def) => {
           let definition = enum_to_definition(enum_def).unwrap();
-          println!("{:?}", definition);
+          debug!("{:?}", definition);
 
           generate_enum_kotlin_code(&definition)
         },
@@ -81,7 +83,7 @@ fn generate_kotlin(root_package: Option<&str>, input_root: &Path, output_root: &
       let relative_path = relative_path.with_file_name(relative_path.file_name().unwrap().to_string_lossy().replace(".proto", ".kt"));
       let output_path = output_root.join(&relative_path);
       let package = relative_path.parent().unwrap().to_string_lossy().replace('/', ".");
-      println!("generate kotlin code into {:?}", output_path);
+      info!("generate kotlin code into {:?}", output_path);
 
       let mut full_package = String::new();
       if let Some(root_package) = root_package {
@@ -96,7 +98,7 @@ fn generate_kotlin(root_package: Option<&str>, input_root: &Path, output_root: &
       wrapped_code.push_str("import jp.assasans.araumi.protocol.codec.wired.*\n");
       wrapped_code.push_str("\n");
       wrapped_code.push_str(&code);
-      println!("{}", wrapped_code);
+      debug!("{}", wrapped_code);
 
       fs::create_dir_all(output_path.parent().unwrap()).unwrap();
       fs::write(output_path, wrapped_code).unwrap();
@@ -140,6 +142,8 @@ pub static DEFINITION_FQN: Lazy<Mutex<HashMap<String, String>>> = Lazy::new(|| M
 pub static REGEX_CACHE: Lazy<Mutex<HashMap<String, Regex>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
 fn generate_definition_index(input_root: &Path) {
+  info!("generating definition index...");
+
   for entry in WalkDir::new(input_root) {
     let entry = entry.unwrap();
     let path = entry.path();
@@ -152,7 +156,7 @@ fn generate_definition_index(input_root: &Path) {
       continue;
     }
 
-    println!("Parsing {:?}...", path);
+    debug!("Parsing {:?}...", path);
     let content = fs::read_to_string(path).unwrap();
 
     let tokens = protolang_parser::tokenizer(&content).unwrap();
@@ -177,13 +181,17 @@ fn generate_definition_index(input_root: &Path) {
       };
 
       let relative_path = relative_path.to_string_lossy().replace(".proto", "").replace('/', ".");
-      println!("registered {} -> {}", simple_name, relative_path);
+      debug!("registered {} -> {}", simple_name, relative_path);
       DEFINITION_FQN.lock().unwrap().insert(simple_name, relative_path);
     }
   }
+
+  info!("definition index generated");
 }
 
 fn generate_model_index(input_root: &Path) {
+  info!("generating model index...");
+
   for entry in WalkDir::new(input_root) {
     let entry = entry.unwrap();
     let path = entry.path();
@@ -209,7 +217,7 @@ fn generate_model_index(input_root: &Path) {
       continue;
     }
 
-    // println!("Parsing {:?}...", path);
+    // debug!("Parsing {:?}...", path);
     let content = fs::read_to_string(path).unwrap();
     if !content.contains("[ModelInfo]") {
       continue;
@@ -221,7 +229,7 @@ fn generate_model_index(input_root: &Path) {
     let model_base_name = captures.get(2).expect("no model base name").as_str();
 
     if model_name != model_base_name.replace("ModelBase", "Model") {
-      // println!("{:?} {:?}", model_name, model_base_name.replace("ModelBase", "Model"));
+      // debug!("{:?} {:?}", model_name, model_base_name.replace("ModelBase", "Model"));
     }
 
     let class_import = Regex::new(&format!(r"import ([\w.]+\.{})", model_base_name));
@@ -229,7 +237,7 @@ fn generate_model_index(input_root: &Path) {
     let model_base_import_fqdn = captures.get(1).expect("no import path").as_str();
     let model_base_import_path = model_base_import_fqdn.replace('.', "/") + ".as";
     let model_base_import_path = Path::new(&model_base_import_path);
-    // println!("{:?} {:?}", model_base_import_fqdn, model_base_import_path);
+    // debug!("{:?} {:?}", model_base_import_fqdn, model_base_import_path);
 
     let mut sources_root = path;
     while let Some(parent) = sources_root.parent() {
@@ -238,34 +246,34 @@ fn generate_model_index(input_root: &Path) {
         break;
       }
     }
-    // println!("{:?}", sources_root);
+    // debug!("{:?}", sources_root);
 
     let model_base_path = sources_root.join(model_base_import_path);
-    // println!("{:?}", model_base_path);
+    // debug!("{:?}", model_base_path);
     let (model_base_path, model_base_contents) = match fs::read_to_string(&model_base_path) {
       Ok(contents) => (model_base_path, contents),
       Err(error) => {
-        // eprintln!("failed to read model base file (trying entrance) {:?}: {:?}", model_base_path, error);
+        // debug!("failed to read model base file (trying entrance) {:?}: {:?}", model_base_path, error);
 
         // Try "entrance"
         let model_base_path = model_base_path.components().map(|it| if it.as_os_str().to_string_lossy() == "game" { Component::Normal(OsStr::new("entrance")) } else { it }).collect::<PathBuf>();
-        // println!("{:?}", model_base_path);
+        // debug!("{:?}", model_base_path);
         match fs::read_to_string(&model_base_path) {
           Ok(contents) => (model_base_path, contents),
           Err(error) => {
-            eprintln!("failed to read model base file {:?}: {:?}", model_base_path, error);
+            error!("failed to read model base file {:?}: {:?}", model_base_path, error);
             todo!();
           }
         }
       }
     };
-    // println!("{}", model_base_contents);
+    // debug!("{}", model_base_contents);
 
     if !model_base_contents.contains("registerModelConstructorCodec") {
       continue;
     }
 
-    // println!("{}", content);
+    // debug!("{}", content);
 
     let constructor_regex = Regex::new(r"registerModelConstructorCodec.+\((.+?),\s*false\)\)\);").unwrap();
     let captures = constructor_regex.captures(&model_base_contents).expect("no model constructor capture");
@@ -279,8 +287,10 @@ fn generate_model_index(input_root: &Path) {
     // EXISTING_TYPES.lock().unwrap().insert(constructor_name.to_owned());
     EXISTING_TYPES.lock().unwrap().insert(format!("{}.Constructor", model_name));
 
-    println!("registered {}", format!("{}.Constructor", model_name.clone()));
+    info!("registered {}", format!("{}.Constructor", model_name.clone()));
   }
+
+  info!("model index generated");
 }
 
 fn generate_protolang_model(input_root: &Path, output_root: &Path) {
@@ -309,13 +319,13 @@ fn generate_protolang_model(input_root: &Path, output_root: &Path) {
       continue;
     }
 
-    // println!("Parsing {:?}...", path);
+    // debug!("Parsing {:?}...", path);
     let content = fs::read_to_string(path).unwrap();
     if !content.contains("[ModelInfo]") {
       continue;
     }
 
-    // println!("{}", content);
+    // debug!("{}", content);
 
     let model_class = Regex::new(r"class (\w+) extends (\w+) implements (\w+)").unwrap();
     let captures = model_class.captures(&content).expect("no model class capture");
@@ -323,14 +333,14 @@ fn generate_protolang_model(input_root: &Path, output_root: &Path) {
     let model_base_name = captures.get(2).expect("no model base name").as_str();
     let model_interface_name = captures.get(3).expect("no model interface name").as_str();
     let model_server_name = model_base_name.replace("ModelBase", "ModelServer");
-    println!("{:?} {:?} {:?} {:?}", captures.get(1).expect("no model name").as_str(), model_base_name, model_interface_name, model_server_name);
+    debug!("{:?} {:?} {:?} {:?}", captures.get(1).expect("no model name").as_str(), model_base_name, model_interface_name, model_server_name);
 
     let class_import = Regex::new(&format!(r"import ([\w.]+\.{})", model_base_name));
     let captures = class_import.unwrap().captures(&content).expect("no class import capture");
     let model_base_import_fqdn = captures.get(1).expect("no import path").as_str();
     let model_base_import_path = model_base_import_fqdn.replace('.', "/") + ".as";
     let model_base_import_path = Path::new(&model_base_import_path);
-    // println!("{:?} {:?}", model_base_import_fqdn, model_base_import_path);
+    // debug!("{:?} {:?}", model_base_import_fqdn, model_base_import_path);
 
     let mut sources_root = path;
     while let Some(parent) = sources_root.parent() {
@@ -339,29 +349,29 @@ fn generate_protolang_model(input_root: &Path, output_root: &Path) {
         break;
       }
     }
-    // println!("{:?}", sources_root);
+    // debug!("{:?}", sources_root);
 
     let model_base_path = sources_root.join(model_base_import_path);
-    // println!("{:?}", model_base_path);
+    // debug!("{:?}", model_base_path);
     let (model_base_path, model_base_contents) = match fs::read_to_string(&model_base_path) {
       Ok(contents) => (model_base_path, contents),
       Err(error) => {
-        // eprintln!("failed to read model base file (trying entrance) {:?}: {:?}", model_base_path, error);
+        // debug!("failed to read model base file (trying entrance) {:?}: {:?}", model_base_path, error);
 
         // Try "entrance"
         let model_base_path = model_base_path.components().map(|it| if it.as_os_str().to_string_lossy() == "game" { Component::Normal(OsStr::new("entrance")) } else { it }).collect::<PathBuf>();
-        // println!("{:?}", model_base_path);
+        // debug!("{:?}", model_base_path);
         match fs::read_to_string(&model_base_path) {
           Ok(contents) => (model_base_path, contents),
           Err(error) => {
-            eprintln!("failed to read model base file {:?}: {:?}", model_base_path, error);
+            error!("failed to read model base file {:?}: {:?}", model_base_path, error);
             todo!();
           }
         }
       }
     };
     let relative_model_base_path = model_base_path.strip_prefix(input_root).unwrap();
-    // println!("{}", model_base_contents);
+    // debug!("{}", model_base_contents);
 
     let model_id_regex = Regex::new(r"this.modelId = Long.getLong\((?<high>-?(0x)?[0-9a-f]+),(?<low>-?(0x)?[0-9a-f]+)\)").unwrap();
     let model_constructor_regex = Regex::new(r"registerModelConstructorCodec\(this.modelId,this._protocol.getCodec\((?<codec>.+)\)\)").unwrap();
@@ -370,11 +380,11 @@ fn generate_protolang_model(input_root: &Path, output_root: &Path) {
 
     let captures = model_id_regex.captures(&model_base_contents).expect("no model id");
     let model_id = convert_to_id(parse_id_from_dec_or_hex(captures.name("high").unwrap().as_str()), parse_id_from_dec_or_hex(captures.name("low").unwrap().as_str()));
-    println!("model id: {}", model_id);
+    debug!("model id: {}", model_id);
 
     let model_constructor = if let Some(captures) = model_constructor_regex.captures(&model_base_contents) {
       let model_constructor = captures.name("codec").unwrap().as_str();
-      println!("model constructor: {}", model_constructor);
+      debug!("model constructor: {}", model_constructor);
       Some(model_constructor.to_owned())
     } else {
       None
@@ -385,7 +395,7 @@ fn generate_protolang_model(input_root: &Path, output_root: &Path) {
     for capture in captures {
       let method_name = capture.name("method").unwrap().as_str();
       let model_id = convert_to_id(parse_id_from_dec_or_hex(capture.name("high").unwrap().as_str()), parse_id_from_dec_or_hex(capture.name("low").unwrap().as_str()));
-      // println!("client method: {} = {}", method_name, model_id);
+      // debug!("client method: {} = {}", method_name, model_id);
 
       client_methods.push(ParsedMethod {
         name: method_name.to_owned(),
@@ -399,10 +409,10 @@ fn generate_protolang_model(input_root: &Path, output_root: &Path) {
       let method_name = capture.name("method").unwrap().as_str();
       let param = capture.name("param").unwrap().as_str();
       let codec = capture.name("codec").unwrap().as_str();
-      // println!("client method: {} = {} by {}", method_name, param, codec);
+      // debug!("client method: {} = {} by {}", method_name, param, codec);
       //
-      // println!("searching for {method_name}");
-      // println!("{:?}", client_methods);
+      // debug!("searching for {method_name}");
+      // debug!("{:?}", client_methods);
       let method = client_methods.iter_mut().find(|it| it.name == method_name).unwrap();
       method.params.push(ParsedMethodParam {
         name: param.to_owned(),
@@ -412,7 +422,7 @@ fn generate_protolang_model(input_root: &Path, output_root: &Path) {
     }
 
     let model_server_contents = fs::read_to_string(model_base_path.parent().unwrap().to_path_buf().join(model_server_name + ".as")).unwrap();
-    // println!("{}", model_server_contents);
+    // debug!("{}", model_server_contents);
 
     let model_method_param_regex = Regex::new(r"this._(?<method>[A-Za-z0-9_]+)_(?<param>[A-Za-z0-9_]+)Codec = this.protocol.getCodec\((?<codec>.+)\)").unwrap();
 
@@ -421,7 +431,7 @@ fn generate_protolang_model(input_root: &Path, output_root: &Path) {
     for capture in captures {
       let method_name = capture.name("method").unwrap().as_str();
       let model_id = convert_to_id(parse_id_from_dec_or_hex(capture.name("high").unwrap().as_str()), parse_id_from_dec_or_hex(capture.name("low").unwrap().as_str()));
-      // println!("server method: {} = {}", method_name, model_id);
+      // debug!("server method: {} = {}", method_name, model_id);
 
       server_methods.push(ParsedMethod {
         name: method_name.to_owned(),
@@ -435,7 +445,7 @@ fn generate_protolang_model(input_root: &Path, output_root: &Path) {
       let method_name = capture.name("method").unwrap().as_str();
       let param = capture.name("param").unwrap().as_str();
       let codec = capture.name("codec").unwrap().as_str();
-      // println!("server method: {} = {} by {}", method_name, param, codec);
+      // debug!("server method: {} = {} by {}", method_name, param, codec);
 
       let method = server_methods.iter_mut().find(|it| it.name == method_name).unwrap();
       method.params.push(ParsedMethodParam {
@@ -445,8 +455,8 @@ fn generate_protolang_model(input_root: &Path, output_root: &Path) {
       });
     }
 
-    println!("CI {:?}", client_methods);
-    println!("SI {:?}", server_methods);
+    debug!("CI {:?}", client_methods);
+    debug!("SI {:?}", server_methods);
 
     let model_name = model_base_name.replace("ModelBase", "Model");
     let model = hl::Model {
@@ -486,22 +496,22 @@ fn generate_protolang_model(input_root: &Path, output_root: &Path) {
     let definition = generate_protolang_code(&model, &[
       Meta { key: "client_package".to_owned(), value: format!("{}:{}", project, convert_path_to_definition(&relative_model_base_path).parent().unwrap().to_string_lossy().replace('/', ".")) }
     ]);
-    println!("{}", definition);
+    debug!("{}", definition);
 
     if let Some(constructor) = &model.constructor {
       for field in &constructor.fields {
         let types = get_types_from_generic(&field.kind);
         for name in &types {
           if !EXISTING_TYPES.lock().unwrap().contains(name) {
-            println!("generating constructor type for {}", name);
+            debug!("generating constructor type for {}", name);
 
             let project = relative_model_base_path.components().nth(0).map(|it| it.as_os_str().to_string_lossy()).unwrap().to_string();
             let (relative_model_base_path, definition) = generate_type_code_for(name, &project, input_root, output_root);
-            println!("{}", definition);
+            debug!("{}", definition);
 
             let relative_model_base_path = relative_model_base_path.with_file_name(relative_model_base_path.file_name().unwrap().to_string_lossy().replacen("Codec", "", 1).replace(".as", ".proto"));
             let output_path = output_root.join(convert_path_to_definition(&relative_model_base_path));
-            println!("generate type into {:?}", output_path);
+            info!("generate type into {:?}", output_path);
             fs::create_dir_all(output_path.parent().unwrap()).unwrap();
             fs::write(output_path, definition).unwrap();
           }
@@ -512,19 +522,19 @@ fn generate_protolang_model(input_root: &Path, output_root: &Path) {
     for method in &model.client_methods {
       for param in &method.params {
         let types = get_types_from_generic(&param.kind);
-        // println!("{:?}", types);
+        // debug!("{:?}", types);
         for name in &types {
           if !EXISTING_TYPES.lock().unwrap().contains(name) {
-            println!("generating type for {}", name);
+            debug!("generating type for {}", name);
 
             // TODO
             let project = relative_model_base_path.components().nth(0).map(|it| it.as_os_str().to_string_lossy()).unwrap().to_string();
             let (relative_model_base_path, definition) = generate_type_code_for(name, &project, input_root, output_root);
-            println!("{}", definition);
+            debug!("{}", definition);
 
             let relative_model_base_path = relative_model_base_path.with_file_name(relative_model_base_path.file_name().unwrap().to_string_lossy().replacen("Codec", "", 1).replace(".as", ".proto"));
             let output_path = output_root.join(convert_path_to_definition(&relative_model_base_path));
-            println!("generate type into {:?}", output_path);
+            info!("generate type into {:?}", output_path);
             fs::create_dir_all(output_path.parent().unwrap()).unwrap();
             fs::write(output_path, definition).unwrap();
           }
@@ -535,19 +545,19 @@ fn generate_protolang_model(input_root: &Path, output_root: &Path) {
     for method in &model.server_methods {
       for param in &method.params {
         let types = get_types_from_generic(&param.kind);
-        // println!("{:?}", types);
+        // debug!("{:?}", types);
         for name in &types {
           if !EXISTING_TYPES.lock().unwrap().contains(name) {
-            println!("generating type for {}", name);
+            debug!("generating type for {}", name);
 
             // TODO
             let project = relative_model_base_path.components().nth(0).map(|it| it.as_os_str().to_string_lossy()).unwrap().to_string();
             let (relative_model_base_path, definition) = generate_type_code_for(name, &project, input_root, output_root);
-            println!("{}", definition);
+            debug!("{}", definition);
 
             let relative_model_base_path = relative_model_base_path.with_file_name(relative_model_base_path.file_name().unwrap().to_string_lossy().replacen("Codec", "", 1).replace(".as", ".proto"));
             let output_path = output_root.join(convert_path_to_definition(&relative_model_base_path));
-            println!("generate type into {:?}", output_path);
+            info!("generate type into {:?}", output_path);
             fs::create_dir_all(output_path.parent().unwrap()).unwrap();
             fs::write(output_path, definition).unwrap();
           }
@@ -557,6 +567,7 @@ fn generate_protolang_model(input_root: &Path, output_root: &Path) {
 
     let relative_model_base_path = relative_model_base_path.with_file_name(relative_model_base_path.file_name().unwrap().to_string_lossy().replace("ModelBase.as", "Model.proto"));
     let output_path = output_root.join(convert_path_to_definition(&relative_model_base_path));
+    info!("generate model into {:?}", output_path);
     fs::create_dir_all(output_path.parent().unwrap()).unwrap();
     fs::write(output_path, definition).unwrap();
 
@@ -579,7 +590,7 @@ fn generate_type_code_for(name: &str, project: &str, input_root: &Path, output_r
         let definition = generate_protolang_code_enum(&enum_def, &[
           Meta { key: "client_package".to_owned(), value: format!("{}:{}", project, convert_path_to_definition(&relative_path).parent().unwrap().to_string_lossy().replace('/', ".")) }
         ]);
-        println!("{}", definition);
+        debug!("{}", definition);
 
         (relative_path, definition)
       }
@@ -615,9 +626,9 @@ fn generate_protolang_type(name: &str, input_root: &Path, output_root: &Path) ->
       continue;
     }
 
-    println!("Parsing {:?}...", relative_path);
+    debug!("Parsing {:?}...", relative_path);
     let content = fs::read_to_string(path).unwrap();
-    // println!("{}", content);
+    // debug!("{}", content);
 
     if content.contains(" switch(") {
       // Enum
@@ -631,7 +642,7 @@ fn generate_protolang_type(name: &str, input_root: &Path, output_root: &Path) ->
     for capture in captures {
       let field_name = capture.name("field").unwrap().as_str();
       let codec = capture.name("codec").unwrap().as_str();
-      // println!("field: {} by {}", field_name, codec =);
+      // debug!("field: {} by {}", field_name, codec =);
 
       fields.push(ParsedField {
         name: field_name.to_owned(),
@@ -640,7 +651,7 @@ fn generate_protolang_type(name: &str, input_root: &Path, output_root: &Path) ->
       });
     }
 
-    println!("{:?}", fields);
+    debug!("{:?}", fields);
 
     let type_def = hl::Type {
       name: name.to_owned(),
@@ -661,15 +672,15 @@ fn generate_protolang_type(name: &str, input_root: &Path, output_root: &Path) ->
       let types = get_types_from_generic(&field.kind);
       for name in &types {
         if !EXISTING_TYPES.lock().unwrap().contains(name) {
-          println!("generating recursive type for {}", name);
+          debug!("generating recursive type for {}", name);
 
           let project = relative_path.components().nth(0).map(|it| it.as_os_str().to_string_lossy()).unwrap().to_string();
           let (relative_path, definition) = generate_type_code_for(name, &project, input_root, output_root);
-          println!("{}", definition);
+          debug!("{}", definition);
 
           let relative_path = relative_path.with_file_name(relative_path.file_name().unwrap().to_string_lossy().replacen("Codec", "", 1).replace(".as", ".proto"));
           let output_path = output_root.join(convert_path_to_definition(&relative_path));
-          println!("generate type into {:?}", output_path);
+          info!("generate type into {:?}", output_path);
           fs::create_dir_all(output_path.parent().unwrap()).unwrap();
           fs::write(output_path, definition).unwrap();
         }
@@ -707,9 +718,9 @@ fn generate_protolang_enum(name: &str, input_root: &Path) -> Option<(PathBuf, hl
       continue;
     }
 
-    println!("Parsing {:?}...", relative_path);
+    debug!("Parsing {:?}...", relative_path);
     let content = fs::read_to_string(path).unwrap();
-    // println!("{}", content);
+    // debug!("{}", content);
 
     if !content.contains(" switch(") {
       return None;
@@ -722,7 +733,7 @@ fn generate_protolang_enum(name: &str, input_root: &Path) -> Option<(PathBuf, hl
     for capture in captures {
       let variant = capture.name("variant").unwrap().as_str();
       let value = capture.name("value").unwrap().as_str().parse::<i64>().unwrap();
-      // println!("variant: {} = {}", variant, value);
+      // debug!("variant: {} = {}", variant, value);
 
       variants.push(ParsedVariant {
         name: variant.to_owned(),
@@ -730,7 +741,7 @@ fn generate_protolang_enum(name: &str, input_root: &Path) -> Option<(PathBuf, hl
       });
     }
 
-    println!("{:?}", variants);
+    debug!("{:?}", variants);
 
     let enum_def = hl::Enum {
       name: name.to_owned(),
@@ -783,6 +794,11 @@ enum Actions {
 }
 
 fn main() {
+  tracing_subscriber::registry()
+    .with(fmt::layer())
+    .with(EnvFilter::from_default_env())
+    .init();
+
   let args = Args::parse();
 
   {
@@ -834,7 +850,7 @@ fn main() {
     Actions::GenerateProtolang { input, output } => {
       generate_model_index(input);
       for (constructor_name, model_name) in MODEL_TYPES.lock().unwrap().iter() {
-        println!("{} -> {}", constructor_name, model_name);
+        debug!("{} -> {}", constructor_name, model_name);
       }
 
       generate_protolang_model(input, output);
@@ -850,7 +866,7 @@ fn main() {
   // let definition = generate_protolang_code_type(&type_def, &[]);
   // let (_, enum_def) = generate_protolang_enum("TargetingMode");
   // let definition = generate_protolang_code_enum(&enum_def, &[]);
-  // println!("{}", definition);
+  // info!("{}", definition);
 }
 
 fn is_path_hidden<P: AsRef<Path>>(path: P) -> bool {

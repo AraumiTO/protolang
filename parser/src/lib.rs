@@ -5,6 +5,7 @@ use std::{iter, slice::Iter};
 
 use itertools::{Itertools, MultiPeek, PeekingNext};
 use span::{Positioned, Span};
+use tracing::trace;
 
 #[derive(Debug)]
 pub struct SyntaxError {
@@ -113,7 +114,7 @@ pub fn tokenizer(input: &str) -> Result<Vec<Positioned<Token>>, SyntaxError> {
 
   'char: while let Some((pos, ch)) = iter.next() {
     // if is_comment {
-    //   println!("comment '{}'", ch);
+    //   trace!("comment '{}'", ch);
     //   if iter.peek_num("*/".len()) == "*/" {
     //     iter.consume_num("*/".len());
     //     tokens.push(Positioned::new(Token::BlockCommentClose, Span { start: pos, end: pos + "/".len(), line, column }));
@@ -411,7 +412,7 @@ pub fn parse_program(input: &mut MultiPeek<Iter<Positioned<Token>>>) -> Result<P
   while let Some(token) = input.peek() {
     match &token.value {
       Token::Comment(comment) => {
-        println!("comment {:?}", comment);
+        trace!("comment {:?}", comment);
         match comment {
           Comment::LineDoc(body) => comments.push(CommentLit(body.to_owned())),
           _ => {}
@@ -514,10 +515,10 @@ pub fn parse_model(input: &mut MultiPeek<Iter<Positioned<Token>>>, comments: &[C
   let mut body = Vec::new();
   let mut item_comments = Vec::new();
   while let Some(token) = input.peek() {
-    println!("body: {:?}", token.value);
+    trace!("body: {:?}", token.value);
     match &token.value {
       Token::Comment(comment) => {
-        println!("comment {:?}", comment);
+        trace!("comment {:?}", comment);
         match comment {
           Comment::LineDoc(body) => item_comments.push(CommentLit(body.to_owned())),
           _ => {}
@@ -610,7 +611,7 @@ pub fn parse_constructor(input: &mut MultiPeek<Iter<Positioned<Token>>>, comment
   while let Some(token) = input.peek() {
     match &token.value {
       Token::Comment(comment) => {
-        println!("comment {:?}", comment);
+        trace!("comment {:?}", comment);
         match comment {
           Comment::LineDoc(body) => field_comments.push(CommentLit(body.to_owned())),
           _ => {}
@@ -757,7 +758,7 @@ pub fn parse_type(input: &mut MultiPeek<Iter<Positioned<Token>>>, comments: &[Co
   while let Some(token) = input.peek() {
     match &token.value {
       Token::Comment(comment) => {
-        println!("comment {:?}", comment);
+        trace!("comment {:?}", comment);
         match comment {
           Comment::LineDoc(body) => field_comments.push(CommentLit(body.to_owned())),
           _ => {}
@@ -823,7 +824,7 @@ pub fn parse_enum(input: &mut MultiPeek<Iter<Positioned<Token>>>, comments: &[Co
   while let Some(token) = input.peek() {
     match &token.value {
       Token::Comment(comment) => {
-        println!("comment {:?}", comment);
+        trace!("comment {:?}", comment);
         match comment {
           Comment::LineDoc(body) => field_comments.push(CommentLit(body.to_owned())),
           _ => {}
@@ -1024,7 +1025,7 @@ pub fn parse_type_2(input: &mut MultiPeek<Iter<Positioned<Token>>>) -> Result<Ty
         }
 
         nullable_token = Some(token.wrap(token.value.to_owned()));
-        println!("PARSED NULLABLE: {:?}", nullable_token);
+        trace!("PARSED NULLABLE: {:?}", nullable_token);
         input.next();
       }
       Token::Ident(ident) => {
@@ -1033,7 +1034,7 @@ pub fn parse_type_2(input: &mut MultiPeek<Iter<Positioned<Token>>>) -> Result<Ty
         }
 
         current_ident = Some(token.wrap(Identifier(ident.to_owned())));
-        println!("PARSED TYPE IDENT: {:?}", current_ident);
+        trace!("PARSED TYPE IDENT: {:?}", current_ident);
         input.next();
       },
       Token::Dot => {
@@ -1046,7 +1047,7 @@ pub fn parse_type_2(input: &mut MultiPeek<Iter<Positioned<Token>>>) -> Result<Ty
 
         input.next();
         current_nested_type = Some(parse_type_2(input).unwrap());
-        println!("PARSED NESTED TYPE IDENT: {:?}", current_ident);
+        trace!("PARSED NESTED TYPE IDENT: {:?}", current_ident);
       },
       Token::Lt => {
         if current_generic.is_some() {
@@ -1056,9 +1057,9 @@ pub fn parse_type_2(input: &mut MultiPeek<Iter<Positioned<Token>>>) -> Result<Ty
           return Err(SyntaxError::new(format!("unexpected token {:?}, expected type identifier", token)));
         }
 
-        println!("PARSE GENERIC ENTER");
+        trace!("PARSE GENERIC ENTER");
         let params = parse_type_2_generic_params(input).unwrap();
-        println!("PARSE GENERIC {:?}", params);
+        trace!("PARSE GENERIC {:?}", params);
 
         current_generic = Some(params);
       },
@@ -1231,6 +1232,8 @@ pub fn convert_comments(comments: &[CommentLit]) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+  use test_log::test;
+  use tracing::{debug, info};
   use std::fs;
 
   use super::*;
@@ -1282,21 +1285,21 @@ mod tests {
         C = 2;
       }
     "#).unwrap();
-    // println!("{:?}", tokens);
+    // debug!("{:?}", tokens);
     for token in &tokens {
-      println!("{:?}", token);
+      debug!("{:?}", token);
     }
 
     let mut iter = itertools::multipeek(&tokens);
     let ast = parse_program(&mut iter).unwrap();
-    println!("{:?}", ast);
+    info!("{:?}", ast);
 
     let model = match &ast.body[0] {
       ProgramItem::Model(model) => model,
       _ => todo!()
     };
     let definition = model_to_definition(model);
-    println!("{:?}", definition);
+    info!("{:?}", definition);
   }
 
   #[test]
