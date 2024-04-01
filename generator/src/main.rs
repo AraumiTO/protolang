@@ -193,24 +193,26 @@ fn generate_definition_index(input_root: &Path) {
     let mut iter = itertools::multipeek(&tokens);
     let ast = protolang_parser::parse_program(&mut iter).unwrap();
 
+    let relative_path = relative_path.to_string_lossy().replace(".proto", "").replace('/', ".");
+
     for item in &ast.body {
-      let simple_name = match item {
+      let relative_path = relative_path.clone();
+      let (simple_name, relative_path) = match item {
         ProgramItem::Model(model) => {
           let definition = model_to_definition(model).unwrap();
-          definition.name
+          (definition.name, format!("{}Base", relative_path))
         },
         ProgramItem::Type(type_def) => {
           let definition = type_to_definition(type_def).unwrap();
-          definition.name
+          (definition.name, relative_path)
         },
         ProgramItem::Enum(enum_def) => {
           let definition = enum_to_definition(enum_def).unwrap();
-          definition.name
+          (definition.name, relative_path)
         },
         _ => continue
       };
 
-      let relative_path = relative_path.to_string_lossy().replace(".proto", "").replace('/', ".");
       debug!("registered {} -> {}", simple_name, relative_path);
       DEFINITION_FQN.lock().unwrap().insert(simple_name, relative_path);
     }
