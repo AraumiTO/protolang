@@ -869,6 +869,9 @@ fn main() {
     types.insert("ModelData".to_owned());
     paths.insert("ModelData".to_owned(), "jp.assasans.araumi.protocol.codec.ModelData".to_owned());
 
+    types.insert("MoveCommand".to_owned());
+    paths.insert("MoveCommand".to_owned(), "jp.assasans.araumi.protocol.codec.MoveCommand".to_owned());
+
     types.insert("Resource".to_owned());
     paths.insert("Resource".to_owned(), "jp.assasans.araumi.resources.Resource".to_owned());
     types.insert("SoundResource".to_owned());
