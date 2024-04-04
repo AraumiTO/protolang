@@ -102,7 +102,7 @@ fn generate_kotlin(root_package: Option<&str>, module: Option<&str>, input_root:
       };
 
       // let relative_path = relative_path.strip_prefix(&module_root).unwrap();
-      let relative_path = relative_path.with_file_name(relative_path.file_name().unwrap().to_string_lossy().replace(".proto", ".kt"));
+      let relative_path = relative_path.with_file_name(relative_path.file_name().unwrap().to_string_lossy().replace(".proto", ".generated.kt"));
       let output_path = output_root.join(&relative_path);
       let package = relative_path.parent().unwrap().to_string_lossy().replace('/', ".");
       info!("generate kotlin code into {:?}", output_path);
