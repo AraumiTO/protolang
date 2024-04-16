@@ -94,7 +94,7 @@ pub fn generate_model_kotlin_code(model: &Model, root_package: Option<&str>) -> 
     builder.push_str("  interface Client : ClientInterface {\n");
     for method in &model.client_methods {
       let params = method.params.iter().map(|it| format!("{}: {}", it.name, convert_type(&it.kind, root_package))).join(", ");
-      builder.push_str(&format!("    @ModelMethod({}) suspend fun {}({})\n", method.id, method.name, params))
+      builder.push_str(&format!("    @ModelMethod({}) fun {}({})\n", method.id, method.name, params))
     }
     builder.push_str("  }\n");
 
