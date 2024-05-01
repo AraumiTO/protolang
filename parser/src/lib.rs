@@ -2,10 +2,16 @@ pub mod span;
 pub mod hl;
 
 use std::{iter, slice::Iter};
+use std::collections::HashSet;
+use std::sync::Mutex;
 
 use itertools::{Itertools, MultiPeek, PeekingNext};
+use once_cell::sync::Lazy;
 use span::{Positioned, Span};
-use tracing::trace;
+use tracing::{error, trace, warn};
+use crate::hl::Meta;
+
+pub static ENUM_TYPES: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
 
 #[derive(Debug)]
 pub struct SyntaxError {
@@ -25,7 +31,7 @@ pub enum Delimiter {
   BraceOpen,
   BraceClose,
   ParenOpen,
-  ParenClose
+  ParenClose,
 }
 
 #[derive(Debug, Clone)]
@@ -93,8 +99,7 @@ impl<'a, T: Iterator<Item = (usize, char)>> PeekNum<'a, T> for MultiPeek<T> {
 
   fn consume_num(&mut self, n: usize) {
     for _ in 0..n {
-      if let Some(_) = self.next() {
-      } else {
+      if let Some(_) = self.next() {} else {
         break; // Break if the iterator ends before peeking n characters
       }
     }
@@ -165,31 +170,31 @@ pub fn tokenizer(input: &str) -> Result<Vec<Positioned<Token>>, SyntaxError> {
     }
 
     match ch {
-      ch if ch.is_whitespace() => {},
+      ch if ch.is_whitespace() => {}
       'm' if iter.peek_num("eta ".len()) == "eta " => {
         iter.consume_num("eta".len());
         let span = Span { start: pos, end: pos + "eta".len(), line, column };
         tokens.push(Positioned::new(Token::Meta, span))
-      },
+      }
       'm' if iter.peek_num("odel ".len()) == "odel " => {
         iter.consume_num("odel".len());
         let span = Span { start: pos, end: pos + "odel".len(), line, column };
         tokens.push(Positioned::new(Token::Model, span))
-      },
+      }
       't' if iter.peek_num("ype ".len()) == "ype " => {
         iter.consume_num("ype".len());
         let span = Span { start: pos, end: pos + "ype".len(), line, column };
         tokens.push(Positioned::new(Token::Type, span))
-      },
+      }
       'e' if iter.peek_num("num ".len()) == "num " => {
         iter.consume_num("num".len());
         let span = Span { start: pos, end: pos + "ype".len(), line, column };
         tokens.push(Positioned::new(Token::Enum, span))
-      },
+      }
       'e' if iter.peek_num("ntity ".len()) == "ntity " => {
         iter.consume_num("ntity".len());
         tokens.push(Positioned::new(Token::Entity, Span { start: pos, end: pos + "ntity".len(), line, column }));
-      },
+      }
       'c' if iter.peek_num("onstructor ".len()) == "onstructor " => {
         iter.consume_num("onstructor".len());
         tokens.push(Positioned::new(Token::Constructor, Span { start: pos, end: pos + "onstructor".len(), line, column }));
@@ -197,19 +202,19 @@ pub fn tokenizer(input: &str) -> Result<Vec<Positioned<Token>>, SyntaxError> {
       'c' if iter.peek_num("lient ".len()) == "lient " => {
         iter.consume_num("lient".len());
         tokens.push(Positioned::new(Token::Client, Span { start: pos, end: pos + "lient".len(), line, column }));
-      },
+      }
       's' if iter.peek_num("erver ".len()) == "erver " => {
         iter.consume_num("erver".len());
         tokens.push(Positioned::new(Token::Server, Span { start: pos, end: pos + "erver".len(), line, column }));
-      },
+      }
       'r' if iter.peek_num("equired ".len()) == "equired " => {
         iter.consume_num("equired".len());
         tokens.push(Positioned::new(Token::Required, Span { start: pos, end: pos + "equired".len(), line, column }));
-      },
+      }
       'o' if iter.peek_num("ptional ".len()) == "ptional " => {
         iter.consume_num("ptional".len());
         tokens.push(Positioned::new(Token::Optional, Span { start: pos, end: pos + "ptional".len(), line, column }));
-      },
+      }
       '=' => tokens.push(Positioned::new(Token::Eq, Span { start: pos, end: pos, line, column })),
       '{' => tokens.push(Positioned::new(Token::Delimiter(Delimiter::BraceOpen), Span { start: pos, end: pos, line, column })),
       '}' => tokens.push(Positioned::new(Token::Delimiter(Delimiter::BraceClose), Span { start: pos, end: pos, line, column })),
@@ -224,7 +229,7 @@ pub fn tokenizer(input: &str) -> Result<Vec<Positioned<Token>>, SyntaxError> {
       '.' => tokens.push(Positioned::new(Token::Dot, Span { start: pos, end: pos, line, column })),
       '"' => {
         is_string = true;
-      },
+      }
       // '/' if iter.peek_num("**".len()) == "**" => {
       //   iter.consume_num("**".len());
       //   tokens.push(Positioned::new(Token::BlockCommentOpen, Span { start: pos, end: pos + "**".len(), line, column }));
@@ -276,7 +281,7 @@ pub fn tokenizer(input: &str) -> Result<Vec<Positioned<Token>>, SyntaxError> {
 
 #[derive(Debug)]
 pub struct Program {
-  pub body: Vec<ProgramItem>
+  pub body: Vec<ProgramItem>,
 }
 
 #[derive(Debug)]
@@ -284,7 +289,7 @@ pub enum ProgramItem {
   Meta(MetaDeclaration),
   Model(ModelDeclaration),
   Type(TypeDeclaration),
-  Enum(EnumDeclaration)
+  Enum(EnumDeclaration),
 }
 
 #[derive(Debug, Clone)]
@@ -305,7 +310,7 @@ pub struct BooleanLit(pub bool);
 #[derive(Debug)]
 pub struct MetaDeclaration {
   pub key: Positioned<Identifier>,
-  pub value: Positioned<StringLit>
+  pub value: Positioned<StringLit>,
 }
 
 #[derive(Debug)]
@@ -313,7 +318,8 @@ pub struct ModelDeclaration {
   pub name: Positioned<Identifier>,
   pub id: Positioned<NumberLit>,
   pub body: Vec<ModelItem>,
-  pub comments: Vec<CommentLit>
+  pub meta: Vec<MetaDeclaration>,
+  pub comments: Vec<CommentLit>,
 }
 
 #[derive(Debug)]
@@ -321,14 +327,15 @@ pub enum ModelItem {
   Entity(EntityDeclaration),
   Constructor(ConstructorDeclaration),
   ServerMethod(ServerMethodDeclaration),
-  ClientMethod(ClientMethodDeclaration)
+  ClientMethod(ClientMethodDeclaration),
 }
 
 #[derive(Debug)]
 pub struct TypeDeclaration {
   pub name: Positioned<Identifier>,
   pub fields: Vec<FieldDeclaration>,
-  pub comments: Vec<CommentLit>
+  pub meta: Vec<MetaDeclaration>,
+  pub comments: Vec<CommentLit>,
 }
 
 #[derive(Debug)]
@@ -336,20 +343,22 @@ pub struct EnumDeclaration {
   pub name: Positioned<Identifier>,
   pub repr: Positioned<Identifier>,
   pub variants: Vec<VariantDeclaration>,
-  pub comments: Vec<CommentLit>
+  pub meta: Vec<MetaDeclaration>,
+  pub comments: Vec<CommentLit>,
 }
 
 #[derive(Debug)]
 pub struct EntityDeclaration {
   pub name: Positioned<Identifier>,
   pub required: Option<Positioned<Token>>,
-  pub comments: Vec<CommentLit>
+  pub comments: Vec<CommentLit>,
 }
 
 #[derive(Debug)]
 pub struct ConstructorDeclaration {
   pub fields: Vec<FieldDeclaration>,
-  pub comments: Vec<CommentLit>
+  pub meta: Vec<MetaDeclaration>,
+  pub comments: Vec<CommentLit>,
 }
 
 #[derive(Debug)]
@@ -357,7 +366,7 @@ pub struct ServerMethodDeclaration {
   pub name: Positioned<Identifier>,
   pub params: Vec<ParamDeclaration>,
   pub id: Positioned<NumberLit>,
-  pub comments: Vec<CommentLit>
+  pub comments: Vec<CommentLit>,
 }
 
 #[derive(Debug)]
@@ -365,7 +374,7 @@ pub struct ClientMethodDeclaration {
   pub name: Positioned<Identifier>,
   pub params: Vec<ParamDeclaration>,
   pub id: Positioned<NumberLit>,
-  pub comments: Vec<CommentLit>
+  pub comments: Vec<CommentLit>,
 }
 
 #[derive(Debug)]
@@ -373,37 +382,37 @@ pub struct FieldDeclaration {
   pub name: Positioned<Identifier>,
   pub kind: Type,
   pub position: Positioned<NumberLit>,
-  pub comments: Vec<CommentLit>
+  pub comments: Vec<CommentLit>,
 }
 
 #[derive(Debug)]
 pub struct VariantDeclaration {
   pub name: Positioned<Identifier>,
   pub value: Positioned<NumberLit>,
-  pub comments: Vec<CommentLit>
+  pub comments: Vec<CommentLit>,
 }
 
 #[derive(Debug)]
 pub struct ParamDeclaration {
   pub name: Positioned<Identifier>,
-  pub kind: Type
+  pub kind: Type,
 }
 
 #[derive(Debug)]
 pub enum Type {
   Ident {
     ty: Positioned<Identifier>,
-    nullable: Option<Positioned<Token>>
+    nullable: Option<Positioned<Token>>,
   },
   Generic {
     ty: Positioned<Identifier>,
     nullable: Option<Positioned<Token>>,
-    params: Vec<Type>
+    params: Vec<Type>,
   },
   Nested {
     ty: Box<Type>,
-    inner: Box<Type>
-  }
+    inner: Box<Type>,
+  },
 }
 
 pub fn parse_program(input: &mut MultiPeek<Iter<Positioned<Token>>>) -> Result<Program, SyntaxError> {
@@ -418,23 +427,23 @@ pub fn parse_program(input: &mut MultiPeek<Iter<Positioned<Token>>>) -> Result<P
           _ => {}
         }
         input.next();
-      },
+      }
       Token::Meta => {
         body.push(ProgramItem::Meta(parse_meta(input).unwrap()));
         comments.clear();
-      },
+      }
       Token::Model => {
         body.push(ProgramItem::Model(parse_model(input, &comments).unwrap()));
         comments.clear();
-      },
+      }
       Token::Type => {
         body.push(ProgramItem::Type(parse_type(input, &comments).unwrap()));
         comments.clear();
-      },
+      }
       Token::Enum => {
         body.push(ProgramItem::Enum(parse_enum(input, &comments).unwrap()));
         comments.clear();
-      },
+      }
       _ => return Err(SyntaxError::new(format!("unrecognized token {:?}", token))),
     }
   }
@@ -447,7 +456,7 @@ pub fn parse_program(input: &mut MultiPeek<Iter<Positioned<Token>>>) -> Result<P
 pub fn parse_meta(input: &mut MultiPeek<Iter<Positioned<Token>>>) -> Result<MetaDeclaration, SyntaxError> {
   let token = input.next().unwrap();
   match &token.value {
-    Token::Meta => {},
+    Token::Meta => {}
     _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected Meta", token)))
   };
 
@@ -459,7 +468,7 @@ pub fn parse_meta(input: &mut MultiPeek<Iter<Positioned<Token>>>) -> Result<Meta
 
   let token = input.next().unwrap();
   match &token.value {
-    Token::Eq => {},
+    Token::Eq => {}
     _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected Eq", token)))
   };
 
@@ -471,47 +480,54 @@ pub fn parse_meta(input: &mut MultiPeek<Iter<Positioned<Token>>>) -> Result<Meta
 
   let token = input.next().unwrap();
   match &token.value {
-    Token::Semi => {},
+    Token::Semi => {}
     _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected Semi", token)))
   };
 
   Ok(MetaDeclaration {
     key,
-    value
+    value,
   })
 }
 
+macro_rules! consume_token {
+  ($input:expr, $token:pat) => {{
+    let token = $input.next().unwrap();
+    match &token.value {
+      $token => token,
+      _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected {}", token, stringify!($token))))
+    }
+  }};
+}
+
+macro_rules! consume_ident {
+  ($input:expr) => {{
+    let token = $input.next().unwrap();
+    match &token.value {
+      Token::Ident(value) => token.span.wrap(Identifier(value.to_owned())),
+      _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected {}", token, stringify!(Token::Ident))))
+    }
+  }};
+}
+
+macro_rules! consume_number {
+  ($input:expr) => {{
+    let token = $input.next().unwrap();
+    match &token.value {
+      Token::Number(value) => token.span.wrap(NumberLit(value.to_owned())),
+      _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected {}", token, stringify!(Token::Number))))
+    }
+  }};
+}
+
 pub fn parse_model(input: &mut MultiPeek<Iter<Positioned<Token>>>, comments: &[CommentLit]) -> Result<ModelDeclaration, SyntaxError> {
-  let token = input.next().unwrap();
-  match &token.value {
-    Token::Model => {},
-    _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected Model", token)))
-  };
+  consume_token!(input, Token::Model);
+  let name = consume_ident!(input);
+  consume_token!(input, Token::Eq);
+  let id = consume_number!(input);
+  consume_token!(input, Token::Delimiter(Delimiter::BraceOpen));
 
-  let token = input.next().unwrap();
-  let name = match &token.value {
-    Token::Ident(value) => token.span.wrap(Identifier(value.to_owned())),
-    _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected Ident", token)))
-  };
-
-  let token = input.next().unwrap();
-  match &token.value {
-    Token::Eq => {},
-    _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected Eq", token)))
-  };
-
-  let token = input.next().unwrap();
-  let id = match &token.value {
-    Token::Number(value) => token.span.wrap(NumberLit(value.to_owned())),
-    _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected Number", token)))
-  };
-
-  let token = input.next().unwrap();
-  match &token.value {
-    Token::Delimiter(Delimiter::BraceOpen) => {},
-    _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected BraceOpen", token)))
-  };
-
+  let mut meta = Vec::new();
   let mut body = Vec::new();
   let mut item_comments = Vec::new();
   while let Some(token) = input.peek() {
@@ -524,39 +540,40 @@ pub fn parse_model(input: &mut MultiPeek<Iter<Positioned<Token>>>, comments: &[C
           _ => {}
         }
         input.next();
-      },
+      }
+      Token::Meta => {
+        meta.push(parse_meta(input).unwrap());
+        item_comments.clear();
+      }
       Token::Required | Token::Entity => {
         body.push(ModelItem::Entity(parse_entity(input, &item_comments).unwrap()));
         item_comments.clear();
-      },
+      }
       Token::Constructor => {
         body.push(ModelItem::Constructor(parse_constructor(input, &item_comments).unwrap()));
         item_comments.clear();
-      },
+      }
       Token::Server => {
         body.push(ModelItem::ServerMethod(parse_server_method(input, &item_comments).unwrap()));
         item_comments.clear();
-      },
+      }
       Token::Client => {
         body.push(ModelItem::ClientMethod(parse_client_method(input, &item_comments).unwrap()));
         item_comments.clear();
-      },
+      }
       Token::Delimiter(Delimiter::BraceClose) => break,
       _ => return Err(SyntaxError::new(format!("unrecognized token {:?}", token))),
     }
   }
 
-  let token = input.next().unwrap();
-  match &token.value {
-    Token::Delimiter(Delimiter::BraceClose) => {},
-    _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected BraceClose", token)))
-  };
+  consume_token!(input, Token::Delimiter(Delimiter::BraceClose));
 
   Ok(ModelDeclaration {
     name,
     id,
     body,
-    comments: comments.to_vec()
+    meta,
+    comments: comments.to_vec(),
   })
 }
 
@@ -570,7 +587,7 @@ pub fn parse_entity(input: &mut MultiPeek<Iter<Positioned<Token>>>, comments: &[
 
   let token = input.next().unwrap();
   match &token.value {
-    Token::Entity => {},
+    Token::Entity => {}
     _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected Entity", token)))
   };
 
@@ -582,30 +599,31 @@ pub fn parse_entity(input: &mut MultiPeek<Iter<Positioned<Token>>>, comments: &[
 
   let token = input.next().unwrap();
   match &token.value {
-    Token::Semi => {},
+    Token::Semi => {}
     _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected Semi", token)))
   };
 
   Ok(EntityDeclaration {
     name,
     required,
-    comments: comments.to_vec()
+    comments: comments.to_vec(),
   })
 }
 
 pub fn parse_constructor(input: &mut MultiPeek<Iter<Positioned<Token>>>, comments: &[CommentLit]) -> Result<ConstructorDeclaration, SyntaxError> {
   let token = input.next().unwrap();
   match &token.value {
-    Token::Constructor => {},
+    Token::Constructor => {}
     _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected Constructor", token)))
   };
 
   let token = input.next().unwrap();
   match &token.value {
-    Token::Delimiter(Delimiter::BraceOpen) => {},
+    Token::Delimiter(Delimiter::BraceOpen) => {}
     _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected BraceOpen", token)))
   };
 
+  let mut meta = Vec::new();
   let mut fields = Vec::new();
   let mut field_comments = Vec::new();
   while let Some(token) = input.peek() {
@@ -617,26 +635,31 @@ pub fn parse_constructor(input: &mut MultiPeek<Iter<Positioned<Token>>>, comment
           _ => {}
         }
         input.next();
-      },
+      }
+      Token::Meta => {
+        meta.push(parse_meta(input).unwrap());
+        field_comments.clear();
+      }
       Token::Ident(_) => {
         fields.push(parse_field(input, &field_comments).unwrap());
         field_comments.clear();
-      },
+      }
       Token::Delimiter(Delimiter::BraceClose) => break,
-      _ => {},
+      _ => {}
       // _ => return Err(SyntaxError::new(format!("unrecognized token {:?}", token))),
     }
   }
 
   let token = input.next().unwrap();
   match &token.value {
-    Token::Delimiter(Delimiter::BraceClose) => {},
+    Token::Delimiter(Delimiter::BraceClose) => {}
     _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected BraceClose", token)))
   };
 
   Ok(ConstructorDeclaration {
     fields,
-    comments: comments.to_vec()
+    meta,
+    comments: comments.to_vec(),
   })
 }
 
@@ -649,7 +672,7 @@ pub fn parse_field(input: &mut MultiPeek<Iter<Positioned<Token>>>, comments: &[C
 
   let token = input.next().unwrap();
   match &token.value {
-    Token::Colon => {},
+    Token::Colon => {}
     _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected Colon", token)))
   };
 
@@ -657,7 +680,7 @@ pub fn parse_field(input: &mut MultiPeek<Iter<Positioned<Token>>>, comments: &[C
 
   let token = input.next().unwrap();
   match &token.value {
-    Token::Eq => {},
+    Token::Eq => {}
     _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected Eq", token)))
   };
 
@@ -669,7 +692,7 @@ pub fn parse_field(input: &mut MultiPeek<Iter<Positioned<Token>>>, comments: &[C
 
   let token = input.next().unwrap();
   match &token.value {
-    Token::Semi => {},
+    Token::Semi => {}
     _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected Semi", token)))
   };
 
@@ -677,7 +700,7 @@ pub fn parse_field(input: &mut MultiPeek<Iter<Positioned<Token>>>, comments: &[C
     name,
     kind,
     position,
-    comments: comments.to_vec()
+    comments: comments.to_vec(),
   })
 }
 
@@ -690,7 +713,7 @@ pub fn parse_variant(input: &mut MultiPeek<Iter<Positioned<Token>>>, comments: &
 
   let token = input.next().unwrap();
   match &token.value {
-    Token::Eq => {},
+    Token::Eq => {}
     _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected Eq", token)))
   };
 
@@ -702,14 +725,14 @@ pub fn parse_variant(input: &mut MultiPeek<Iter<Positioned<Token>>>, comments: &
 
   let token = input.next().unwrap();
   match &token.value {
-    Token::Semi => {},
+    Token::Semi => {}
     _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected Semi", token)))
   };
 
   Ok(VariantDeclaration {
     name,
     value,
-    comments: comments.to_vec()
+    comments: comments.to_vec(),
   })
 }
 
@@ -722,7 +745,7 @@ pub fn parse_param(input: &mut MultiPeek<Iter<Positioned<Token>>>) -> Result<Par
 
   let token = input.next().unwrap();
   match &token.value {
-    Token::Colon => {},
+    Token::Colon => {}
     _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected Colon", token)))
   };
 
@@ -730,14 +753,14 @@ pub fn parse_param(input: &mut MultiPeek<Iter<Positioned<Token>>>) -> Result<Par
 
   Ok(ParamDeclaration {
     name,
-    kind
+    kind,
   })
 }
 
 pub fn parse_type(input: &mut MultiPeek<Iter<Positioned<Token>>>, comments: &[CommentLit]) -> Result<TypeDeclaration, SyntaxError> {
   let token = input.next().unwrap();
   match &token.value {
-    Token::Type => {},
+    Token::Type => {}
     _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected Type", token)))
   };
 
@@ -749,10 +772,11 @@ pub fn parse_type(input: &mut MultiPeek<Iter<Positioned<Token>>>, comments: &[Co
 
   let token = input.next().unwrap();
   match &token.value {
-    Token::Delimiter(Delimiter::BraceOpen) => {},
+    Token::Delimiter(Delimiter::BraceOpen) => {}
     _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected BraceOpen", token)))
   };
 
+  let mut meta = Vec::new();
   let mut fields = Vec::new();
   let mut field_comments = Vec::new();
   while let Some(token) = input.peek() {
@@ -764,34 +788,39 @@ pub fn parse_type(input: &mut MultiPeek<Iter<Positioned<Token>>>, comments: &[Co
           _ => {}
         }
         input.next();
-      },
+      }
+      Token::Meta => {
+        meta.push(parse_meta(input).unwrap());
+        field_comments.clear();
+      }
       Token::Ident(_) => {
         fields.push(parse_field(input, &field_comments).unwrap());
         field_comments.clear();
-      },
+      }
       Token::Delimiter(Delimiter::BraceClose) => break,
-      _ => {},
+      _ => {}
       // _ => return Err(SyntaxError::new(format!("unrecognized token {:?}", token))),
     }
   }
 
   let token = input.next().unwrap();
   match &token.value {
-    Token::Delimiter(Delimiter::BraceClose) => {},
+    Token::Delimiter(Delimiter::BraceClose) => {}
     _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected BraceClose", token)))
   };
 
   Ok(TypeDeclaration {
     name,
     fields,
-    comments: comments.to_vec()
+    meta,
+    comments: comments.to_vec(),
   })
 }
 
 pub fn parse_enum(input: &mut MultiPeek<Iter<Positioned<Token>>>, comments: &[CommentLit]) -> Result<EnumDeclaration, SyntaxError> {
   let token = input.next().unwrap();
   match &token.value {
-    Token::Enum => {},
+    Token::Enum => {}
     _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected Enum", token)))
   };
 
@@ -803,7 +832,7 @@ pub fn parse_enum(input: &mut MultiPeek<Iter<Positioned<Token>>>, comments: &[Co
 
   let token = input.next().unwrap();
   match &token.value {
-    Token::Colon => {},
+    Token::Colon => {}
     _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected Colon", token)))
   };
 
@@ -815,10 +844,11 @@ pub fn parse_enum(input: &mut MultiPeek<Iter<Positioned<Token>>>, comments: &[Co
 
   let token = input.next().unwrap();
   match &token.value {
-    Token::Delimiter(Delimiter::BraceOpen) => {},
+    Token::Delimiter(Delimiter::BraceOpen) => {}
     _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected BraceOpen", token)))
   };
 
+  let mut meta = Vec::new();
   let mut variants = Vec::new();
   let mut field_comments = Vec::new();
   while let Some(token) = input.peek() {
@@ -830,20 +860,24 @@ pub fn parse_enum(input: &mut MultiPeek<Iter<Positioned<Token>>>, comments: &[Co
           _ => {}
         }
         input.next();
-      },
+      }
+      Token::Meta => {
+        meta.push(parse_meta(input).unwrap());
+        field_comments.clear();
+      }
       Token::Ident(_) => {
         variants.push(parse_variant(input, &field_comments).unwrap());
         field_comments.clear();
-      },
+      }
       Token::Delimiter(Delimiter::BraceClose) => break,
-      _ => {},
+      _ => {}
       // _ => return Err(SyntaxError::new(format!("unrecognized token {:?}", token))),
     }
   }
 
   let token = input.next().unwrap();
   match &token.value {
-    Token::Delimiter(Delimiter::BraceClose) => {},
+    Token::Delimiter(Delimiter::BraceClose) => {}
     _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected BraceClose", token)))
   };
 
@@ -851,14 +885,15 @@ pub fn parse_enum(input: &mut MultiPeek<Iter<Positioned<Token>>>, comments: &[Co
     name,
     repr,
     variants,
-    comments: comments.to_vec()
+    meta,
+    comments: comments.to_vec(),
   })
 }
 
 pub fn parse_server_method(input: &mut MultiPeek<Iter<Positioned<Token>>>, comments: &[CommentLit]) -> Result<ServerMethodDeclaration, SyntaxError> {
   let token = input.next().unwrap();
   match &token.value {
-    Token::Server => {},
+    Token::Server => {}
     _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected Server", token)))
   };
 
@@ -870,7 +905,7 @@ pub fn parse_server_method(input: &mut MultiPeek<Iter<Positioned<Token>>>, comme
 
   let token = input.next().unwrap();
   match &token.value {
-    Token::Delimiter(Delimiter::ParenOpen) => {},
+    Token::Delimiter(Delimiter::ParenOpen) => {}
     _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected ParenOpen", token)))
   };
 
@@ -888,14 +923,14 @@ pub fn parse_server_method(input: &mut MultiPeek<Iter<Positioned<Token>>>, comme
             let token = input.peek().unwrap();
             match &token.value {
               Token::Delimiter(Delimiter::ParenClose) => return Err(SyntaxError::new(format!("unexpected token {:?}", token))),
-              _ => {},
+              _ => {}
             }
-          },
-          Token::Delimiter(Delimiter::ParenClose) => {},
+          }
+          Token::Delimiter(Delimiter::ParenClose) => {}
           _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected Comma or ParenClose", token))),
         }
         input.reset_peek();
-      },
+      }
       Token::Delimiter(Delimiter::ParenClose) => break,
       _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected Ident or ParenClose", token))),
     }
@@ -903,13 +938,13 @@ pub fn parse_server_method(input: &mut MultiPeek<Iter<Positioned<Token>>>, comme
 
   let token = input.next().unwrap();
   match &token.value {
-    Token::Delimiter(Delimiter::ParenClose) => {},
+    Token::Delimiter(Delimiter::ParenClose) => {}
     _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected ParenClose", token)))
   };
 
   let token = input.next().unwrap();
   match &token.value {
-    Token::Eq => {},
+    Token::Eq => {}
     _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected Eq", token)))
   };
 
@@ -921,7 +956,7 @@ pub fn parse_server_method(input: &mut MultiPeek<Iter<Positioned<Token>>>, comme
 
   let token = input.next().unwrap();
   match &token.value {
-    Token::Semi => {},
+    Token::Semi => {}
     _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected Semi", token)))
   };
 
@@ -929,14 +964,14 @@ pub fn parse_server_method(input: &mut MultiPeek<Iter<Positioned<Token>>>, comme
     name,
     params,
     id,
-    comments: comments.to_vec()
+    comments: comments.to_vec(),
   })
 }
 
 pub fn parse_client_method(input: &mut MultiPeek<Iter<Positioned<Token>>>, comments: &[CommentLit]) -> Result<ClientMethodDeclaration, SyntaxError> {
   let token = input.next().unwrap();
   match &token.value {
-    Token::Client => {},
+    Token::Client => {}
     _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected Client", token)))
   };
 
@@ -948,7 +983,7 @@ pub fn parse_client_method(input: &mut MultiPeek<Iter<Positioned<Token>>>, comme
 
   let token = input.next().unwrap();
   match &token.value {
-    Token::Delimiter(Delimiter::ParenOpen) => {},
+    Token::Delimiter(Delimiter::ParenOpen) => {}
     _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected ParenOpen", token)))
   };
 
@@ -966,14 +1001,14 @@ pub fn parse_client_method(input: &mut MultiPeek<Iter<Positioned<Token>>>, comme
             let token = input.peek().unwrap();
             match &token.value {
               Token::Delimiter(Delimiter::ParenClose) => return Err(SyntaxError::new(format!("unexpected token {:?}", token))),
-              _ => {},
+              _ => {}
             }
-          },
-          Token::Delimiter(Delimiter::ParenClose) => {},
+          }
+          Token::Delimiter(Delimiter::ParenClose) => {}
           _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected Comma or ParenClose", token))),
         }
         input.reset_peek();
-      },
+      }
       Token::Delimiter(Delimiter::ParenClose) => break,
       _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected Ident or ParenClose", token))),
     }
@@ -981,13 +1016,13 @@ pub fn parse_client_method(input: &mut MultiPeek<Iter<Positioned<Token>>>, comme
 
   let token = input.next().unwrap();
   match &token.value {
-    Token::Delimiter(Delimiter::ParenClose) => {},
+    Token::Delimiter(Delimiter::ParenClose) => {}
     _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected ParenClose", token)))
   };
 
   let token = input.next().unwrap();
   match &token.value {
-    Token::Eq => {},
+    Token::Eq => {}
     _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected Eq", token)))
   };
 
@@ -999,7 +1034,7 @@ pub fn parse_client_method(input: &mut MultiPeek<Iter<Positioned<Token>>>, comme
 
   let token = input.next().unwrap();
   match &token.value {
-    Token::Semi => {},
+    Token::Semi => {}
     _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected Semi", token)))
   };
 
@@ -1007,7 +1042,7 @@ pub fn parse_client_method(input: &mut MultiPeek<Iter<Positioned<Token>>>, comme
     name,
     params,
     id,
-    comments: comments.to_vec()
+    comments: comments.to_vec(),
   })
 }
 
@@ -1036,7 +1071,7 @@ pub fn parse_type_2(input: &mut MultiPeek<Iter<Positioned<Token>>>) -> Result<Ty
         current_ident = Some(token.wrap(Identifier(ident.to_owned())));
         trace!("PARSED TYPE IDENT: {:?}", current_ident);
         input.next();
-      },
+      }
       Token::Dot => {
         if current_nested_type.is_some() {
           return Err(SyntaxError::new(format!("unexpected token {:?}, nested type is already present", token)));
@@ -1048,7 +1083,7 @@ pub fn parse_type_2(input: &mut MultiPeek<Iter<Positioned<Token>>>) -> Result<Ty
         input.next();
         current_nested_type = Some(parse_type_2(input).unwrap());
         trace!("PARSED NESTED TYPE IDENT: {:?}", current_ident);
-      },
+      }
       Token::Lt => {
         if current_generic.is_some() {
           return Err(SyntaxError::new(format!("unexpected token {:?}, generic is already present", token)));
@@ -1062,7 +1097,7 @@ pub fn parse_type_2(input: &mut MultiPeek<Iter<Positioned<Token>>>) -> Result<Ty
         trace!("PARSE GENERIC {:?}", params);
 
         current_generic = Some(params);
-      },
+      }
       _ => {
         let token = token.to_owned();
         input.reset_peek();
@@ -1072,13 +1107,13 @@ pub fn parse_type_2(input: &mut MultiPeek<Iter<Positioned<Token>>>) -> Result<Ty
             return Some(Type::Generic {
               ty: current_ident.unwrap(),
               nullable: nullable_token,
-              params: current_generic
+              params: current_generic,
             });
           }
           if let Some(current_ident) = current_ident {
             return Some(Type::Ident {
               ty: current_ident,
-              nullable: nullable_token
+              nullable: nullable_token,
             });
           }
           None
@@ -1087,7 +1122,7 @@ pub fn parse_type_2(input: &mut MultiPeek<Iter<Positioned<Token>>>) -> Result<Ty
         if let Some(current_nested_type) = current_nested_type {
           return Ok(Type::Nested {
             ty: Box::new(get_type().unwrap()),
-            inner: Box::new(current_nested_type)
+            inner: Box::new(current_nested_type),
           });
         }
 
@@ -1105,7 +1140,7 @@ pub fn parse_type_2(input: &mut MultiPeek<Iter<Positioned<Token>>>) -> Result<Ty
 pub fn parse_type_2_generic_params(input: &mut MultiPeek<Iter<Positioned<Token>>>) -> Result<Vec<Type>, SyntaxError> {
   let token = input.next().unwrap();
   match &token.value {
-    Token::Lt => {},
+    Token::Lt => {}
     _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected Lt", token)))
   };
 
@@ -1124,14 +1159,14 @@ pub fn parse_type_2_generic_params(input: &mut MultiPeek<Iter<Positioned<Token>>
             let token = input.peek().unwrap();
             match &token.value {
               Token::Gt => return Err(SyntaxError::new(format!("unexpected token {:?}", token))),
-              _ => {},
+              _ => {}
             }
-          },
-          Token::Gt => {},
+          }
+          Token::Gt => {}
           _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected Comma or Gt", token))),
         }
         input.reset_peek();
-      },
+      }
       Token::Gt => break,
       _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected Ident or Gt", token))),
     }
@@ -1139,7 +1174,7 @@ pub fn parse_type_2_generic_params(input: &mut MultiPeek<Iter<Positioned<Token>>
 
   let token = input.next().unwrap();
   match &token.value {
-    Token::Gt => {},
+    Token::Gt => {}
     _ => return Err(SyntaxError::new(format!("unrecognized token {:?}, expected Gt", token)))
   };
 
@@ -1150,13 +1185,35 @@ pub fn type_to_hl(kind: &Type) -> String {
   match kind {
     Type::Ident { ty, nullable } => {
       format!("{}{}", ty.value.0.to_owned(), if nullable.is_some() { "?" } else { "" })
-    },
+    }
     Type::Generic { ty, nullable, params } => {
       let params = params.iter().map(|it| type_to_hl(it)).join(", ");
       format!("{}<{}>{}", ty.value.0.to_owned(), params, if nullable.is_some() { "?" } else { "" })
-    },
+    }
     Type::Nested { ty, inner } => {
       format!("{}.{}", type_to_hl(ty), type_to_hl(inner))
+    }
+  }
+}
+
+pub fn type_to_hl_codec(kind: &Type) -> String {
+  match kind {
+    Type::Ident { ty, nullable } => {
+      let name = ty.value.0.to_owned();
+      let info = if ENUM_TYPES.lock().unwrap().contains(&name) { "EnumCodecInfo" } else { "TypeCodecInfo" };
+      format!("new {}({},{})", info, name, if nullable.is_some() { "true" } else { "false" })
+    }
+    Type::Generic { ty, nullable, params } => {
+      let main = ty.value.0.to_owned();
+      match main.as_str() {
+        "List" => format!("new CollectionCodecInfo({},{},1)", type_to_hl_codec(&params[0]), if nullable.is_some() { "true" } else { "false" }),
+        "Map" => format!("new MapCodecInfo({},{},{},1)", type_to_hl_codec(&params[0]), type_to_hl_codec(&params[1]), if nullable.is_some() { "true" } else { "false" }),
+        _ => todo!()
+      }
+    }
+    Type::Nested { ty, inner } => {
+      warn!("unsupported type: {}", type_to_hl(&kind));
+      format!("%%{}%%", type_to_hl(&kind))
     }
   }
 }
@@ -1173,30 +1230,35 @@ pub fn model_to_definition(input: &ModelDeclaration) -> Result<hl::Model, Syntax
       fields: it.fields.iter().map(|it| hl::Field {
         name: it.name.value.0.to_owned(),
         kind: type_to_hl(&it.kind),
+        codec: type_to_hl_codec(&it.kind),
         position: it.position.value.0 as usize,
-        comments: convert_comments(&it.comments)
+        comments: convert_comments(&it.comments),
       }).collect_vec(),
-      comments: convert_comments(&it.comments)
+      meta: convert_meta(&it.meta),
+      comments: convert_comments(&it.comments),
     }),
     client_methods: client_methods.map(|it| hl::ClientMethod {
       name: it.name.value.0.to_owned(),
       id: it.id.value.0,
       params: it.params.iter().map(|it| hl::Param {
         name: it.name.value.0.to_owned(),
-        kind: type_to_hl(&it.kind)
+        kind: type_to_hl(&it.kind),
+        codec: type_to_hl_codec(&it.kind),
       }).collect_vec(),
-      comments: convert_comments(&it.comments)
+      comments: convert_comments(&it.comments),
     }).collect_vec(),
     server_methods: server_methods.map(|it| hl::ServerMethod {
       name: it.name.value.0.to_owned(),
       id: it.id.value.0,
       params: it.params.iter().map(|it| hl::Param {
         name: it.name.value.0.to_owned(),
-        kind: type_to_hl(&it.kind)
+        kind: type_to_hl(&it.kind),
+        codec: type_to_hl_codec(&it.kind),
       }).collect_vec(),
-      comments: convert_comments(&it.comments)
+      comments: convert_comments(&it.comments),
     }).collect_vec(),
-    comments: convert_comments(&input.comments)
+    meta: convert_meta(&input.meta),
+    comments: convert_comments(&input.comments),
   })
 }
 
@@ -1206,10 +1268,12 @@ pub fn type_to_definition(input: &TypeDeclaration) -> Result<hl::Type, SyntaxErr
     fields: input.fields.iter().map(|it| hl::Field {
       name: it.name.value.0.to_owned(),
       kind: type_to_hl(&it.kind),
+      codec: type_to_hl_codec(&it.kind),
       position: it.position.value.0 as usize,
-      comments: convert_comments(&it.comments)
+      comments: convert_comments(&it.comments),
     }).collect_vec(),
-    comments: convert_comments(&input.comments)
+    meta: convert_meta(&input.meta),
+    comments: convert_comments(&input.comments),
   })
 }
 
@@ -1220,14 +1284,24 @@ pub fn enum_to_definition(input: &EnumDeclaration) -> Result<hl::Enum, SyntaxErr
     variants: input.variants.iter().map(|it| hl::Variant {
       name: it.name.value.0.to_owned(),
       value: it.value.value.0,
-      comments: convert_comments(&it.comments)
+      comments: convert_comments(&it.comments),
     }).collect_vec(),
-    comments: convert_comments(&input.comments)
+    meta: convert_meta(&input.meta),
+    comments: convert_comments(&input.comments),
   })
 }
 
 pub fn convert_comments(comments: &[CommentLit]) -> Vec<String> {
   comments.iter().map(|it| it.0[2..].trim().to_owned()).collect::<_>()
+}
+
+pub fn convert_meta(meta: &[MetaDeclaration]) -> Vec<Meta> {
+  meta.iter().map(|it| {
+    Meta {
+      key: it.key.value.0.to_owned(),
+      value: it.value.value.0.to_owned(),
+    }
+  }).collect::<_>()
 }
 
 #[cfg(test)]
@@ -1244,12 +1318,16 @@ mod tests {
       /// Example model
       /// that demonstrates parser's abilities
       model SusModel = 213242343 {
+        meta client_name = "SusModel";
+
         /// Comment for
         /// required SusEntity
         required entity SusEntity;
 
         /// Comment for constructor
         constructor {
+          meta client_name = "SusData";
+
           /// Comment for constructor field
           /// CTOR FIELD 1 of type i32
           CTORFIELD1: i32 = 1;
@@ -1309,27 +1387,51 @@ mod tests {
     assert_eq!(type_to_hl(&Type::Generic { ty: Positioned::identity(Identifier("ZeroParam".to_owned())), nullable: None, params: vec![] }), "ZeroParam<>");
     assert_eq!(type_to_hl(&Type::Generic { ty: Positioned::identity(Identifier("ZeroParam".to_owned())), nullable: Some(Positioned::identity(Token::Question)), params: vec![] }), "ZeroParam<>?");
 
-    assert_eq!(type_to_hl(&Type::Generic { ty: Positioned::identity(Identifier("OneParam".to_owned())), nullable: None, params: vec![
-      Type::Ident { ty: Positioned::identity(Identifier("String".to_owned())), nullable: None }
-    ] }), "OneParam<String>");
-    assert_eq!(type_to_hl(&Type::Generic { ty: Positioned::identity(Identifier("OneParam".to_owned())), nullable: Some(Positioned::identity(Token::Question)), params: vec![
-      Type::Ident { ty: Positioned::identity(Identifier("String".to_owned())), nullable: None }
-    ] }), "OneParam<String>?");
-    assert_eq!(type_to_hl(&Type::Generic { ty: Positioned::identity(Identifier("OneParam".to_owned())), nullable: None, params: vec![
-      Type::Ident { ty: Positioned::identity(Identifier("String".to_owned())), nullable: Some(Positioned::identity(Token::Question)) }
-    ] }), "OneParam<String?>");
-    assert_eq!(type_to_hl(&Type::Generic { ty: Positioned::identity(Identifier("OneParam".to_owned())), nullable: Some(Positioned::identity(Token::Question)), params: vec![
-      Type::Ident { ty: Positioned::identity(Identifier("String".to_owned())), nullable: Some(Positioned::identity(Token::Question)) }
-    ] }), "OneParam<String?>?");
+    assert_eq!(type_to_hl(&Type::Generic {
+      ty: Positioned::identity(Identifier("OneParam".to_owned())),
+      nullable: None,
+      params: vec![
+        Type::Ident { ty: Positioned::identity(Identifier("String".to_owned())), nullable: None }
+      ],
+    }), "OneParam<String>");
+    assert_eq!(type_to_hl(&Type::Generic {
+      ty: Positioned::identity(Identifier("OneParam".to_owned())),
+      nullable: Some(Positioned::identity(Token::Question)),
+      params: vec![
+        Type::Ident { ty: Positioned::identity(Identifier("String".to_owned())), nullable: None }
+      ],
+    }), "OneParam<String>?");
+    assert_eq!(type_to_hl(&Type::Generic {
+      ty: Positioned::identity(Identifier("OneParam".to_owned())),
+      nullable: None,
+      params: vec![
+        Type::Ident { ty: Positioned::identity(Identifier("String".to_owned())), nullable: Some(Positioned::identity(Token::Question)) }
+      ],
+    }), "OneParam<String?>");
+    assert_eq!(type_to_hl(&Type::Generic {
+      ty: Positioned::identity(Identifier("OneParam".to_owned())),
+      nullable: Some(Positioned::identity(Token::Question)),
+      params: vec![
+        Type::Ident { ty: Positioned::identity(Identifier("String".to_owned())), nullable: Some(Positioned::identity(Token::Question)) }
+      ],
+    }), "OneParam<String?>?");
 
-    assert_eq!(type_to_hl(&Type::Generic { ty: Positioned::identity(Identifier("TwoParam".to_owned())), nullable: None, params: vec![
-      Type::Ident { ty: Positioned::identity(Identifier("A".to_owned())), nullable: None },
-      Type::Ident { ty: Positioned::identity(Identifier("B".to_owned())), nullable: None }
-    ] }), "TwoParam<A, B>");
+    assert_eq!(type_to_hl(&Type::Generic {
+      ty: Positioned::identity(Identifier("TwoParam".to_owned())),
+      nullable: None,
+      params: vec![
+        Type::Ident { ty: Positioned::identity(Identifier("A".to_owned())), nullable: None },
+        Type::Ident { ty: Positioned::identity(Identifier("B".to_owned())), nullable: None },
+      ],
+    }), "TwoParam<A, B>");
 
-    assert_eq!(type_to_hl(&Type::Generic { ty: Positioned::identity(Identifier("TwoParam".to_owned())), nullable: Some(Positioned::identity(Token::Question)), params: vec![
-      Type::Ident { ty: Positioned::identity(Identifier("A".to_owned())), nullable: Some(Positioned::identity(Token::Question)) },
-      Type::Ident { ty: Positioned::identity(Identifier("B".to_owned())), nullable: None }
-    ] }), "TwoParam<A?, B>?");
+    assert_eq!(type_to_hl(&Type::Generic {
+      ty: Positioned::identity(Identifier("TwoParam".to_owned())),
+      nullable: Some(Positioned::identity(Token::Question)),
+      params: vec![
+        Type::Ident { ty: Positioned::identity(Identifier("A".to_owned())), nullable: Some(Positioned::identity(Token::Question)) },
+        Type::Ident { ty: Positioned::identity(Identifier("B".to_owned())), nullable: None },
+      ],
+    }), "TwoParam<A?, B>?");
   }
 }

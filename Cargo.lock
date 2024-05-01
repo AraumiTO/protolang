@@ -216,6 +216,7 @@ name = "protolang-parser"
 version = "0.1.0"
 dependencies = [
  "itertools",
+ "once_cell",
  "test-log",
  "tracing",
 ]

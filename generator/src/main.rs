@@ -15,10 +15,11 @@ use lazy_static::lazy_static;
 use tracing::{debug, error, info, trace};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 use walkdir::WalkDir;
-use protolang_parser::{enum_to_definition, hl, model_to_definition, type_to_definition, ProgramItem};
+use protolang_parser::{enum_to_definition, hl, model_to_definition, type_to_definition, ProgramItem, convert_meta, type_to_hl_codec, ENUM_TYPES};
 use regex::Regex;
 use once_cell::sync::Lazy;
-use protolang_parser::hl::Meta;
+use protolang_parser::hl::{Meta, ModelConstructor, Type};
+use crate::target::actionscript::{generate_enum_actionscript_code, generate_model_base_actionscript_code, generate_model_client_interface_actionscript_code, generate_model_server_actionscript_code, generate_type_actionscript_code};
 use crate::target::kotlin::{generate_enum_kotlin_code, generate_model_kotlin_code, generate_type_kotlin_code};
 use crate::target::protolang::{generate_protolang_code, generate_protolang_code_enum, generate_protolang_code_type};
 
@@ -72,7 +73,7 @@ fn generate_kotlin(root_package: Option<&str>, module: Option<&str>, input_root:
       match item {
         ProgramItem::Meta(item) => meta.push(Meta {
           key: item.key.value.0.to_owned(),
-          value: item.key.value.0.to_owned()
+          value: item.key.value.0.to_owned(),
         }),
         _ => continue
       };
@@ -85,19 +86,19 @@ fn generate_kotlin(root_package: Option<&str>, module: Option<&str>, input_root:
           debug!("{:?}", definition);
 
           generate_model_kotlin_code(&definition, root_package)
-        },
+        }
         ProgramItem::Type(type_def) => {
           let definition = type_to_definition(type_def).unwrap();
           debug!("{:?}", definition);
 
           generate_type_kotlin_code(&definition, root_package)
-        },
+        }
         ProgramItem::Enum(enum_def) => {
           let definition = enum_to_definition(enum_def).unwrap();
           debug!("{:?}", definition);
 
           generate_enum_kotlin_code(&definition, root_package)
-        },
+        }
         _ => continue
       };
 
@@ -129,31 +130,245 @@ fn generate_kotlin(root_package: Option<&str>, module: Option<&str>, input_root:
   }
 }
 
+fn generate_actionscript(root_package: Option<&str>, module: Option<&str>, input_root: &Path, output_root: &Path) {
+  for entry in WalkDir::new(input_root) {
+    let entry = entry.unwrap();
+    let path = entry.path();
+    let relative_path = path.strip_prefix(input_root).unwrap();
+    if is_path_hidden(relative_path) {
+      continue;
+    }
+
+    if !entry.file_type().is_file() {
+      continue;
+    }
+
+    if !path.extension().is_some_and(|it| it == "proto") {
+      continue;
+    }
+
+    let file_module = get_path_module(relative_path);
+    debug!("Module: {:?}", file_module);
+    let (file_module, module_root) = match file_module {
+      Some(module) => module,
+      None => {
+        error!("File {:?} is not attached to any module", path);
+        todo!();
+      }
+    };
+
+    if let Some(expected_module) = module {
+      if file_module != *expected_module {
+        continue;
+      }
+    }
+
+    info!("Parsing {:?}...", path);
+    let content = fs::read_to_string(path).unwrap();
+
+    let tokens = protolang_parser::tokenizer(&content).unwrap();
+    for token in &tokens {
+      trace!("{:?}", token);
+    }
+
+    let mut iter = itertools::multipeek(&tokens);
+    let ast = protolang_parser::parse_program(&mut iter).unwrap();
+    debug!("{:?}", ast);
+
+    let mut meta = Vec::new();
+    for item in &ast.body {
+      match item {
+        ProgramItem::Meta(item) => meta.push(Meta {
+          key: item.key.value.0.to_owned(),
+          value: item.key.value.0.to_owned(),
+        }),
+        _ => continue
+      };
+    }
+
+    for item in &ast.body {
+      if let ProgramItem::Model(model) = &item {
+        let definition = model_to_definition(model).unwrap();
+        debug!("{:?}", definition);
+
+        if let Some(constructor) = definition.constructor.as_ref() {
+          let type_def = convert_constructor_to_type(constructor.to_owned());
+          let code = generate_type_actionscript_code(&type_def, root_package);
+          let class_name = if let Some(meta) = type_def.meta.iter().find(|it| it.key == "client_name") {
+            &meta.value
+          } else {
+            &type_def.name
+          };
+
+          let relative_path = relative_path.with_file_name(format!("{}.as", class_name));
+          let output_path = output_root.join(&relative_path);
+          let package = relative_path.parent().unwrap().to_string_lossy().replace('/', ".");
+          info!("generate actionscript code into {:?}", output_path);
+
+          let mut full_package = String::new();
+          if let Some(root_package) = root_package {
+            full_package.push_str(root_package);
+            full_package.push_str(".");
+          }
+          full_package.push_str(&package);
+
+          let mut wrapped_code = String::new();
+          wrapped_code.push_str(&code);
+          debug!("{}", wrapped_code);
+
+          fs::create_dir_all(output_path.parent().unwrap()).unwrap();
+          fs::write(output_path, wrapped_code).unwrap();
+        }
+
+        {
+          let code = generate_model_server_actionscript_code(&definition, root_package);
+
+          let relative_path = relative_path.with_file_name(relative_path.file_name().unwrap().to_string_lossy().replace(".proto", "Server.as"));
+          let output_path = output_root.join(&relative_path);
+          let package = relative_path.parent().unwrap().to_string_lossy().replace('/', ".");
+          info!("generate actionscript code into {:?}", output_path);
+
+          let mut full_package = String::new();
+          if let Some(root_package) = root_package {
+            full_package.push_str(root_package);
+            full_package.push_str(".");
+          }
+          full_package.push_str(&package);
+
+          let mut wrapped_code = String::new();
+          wrapped_code.push_str(&code);
+          debug!("{}", wrapped_code);
+
+          fs::create_dir_all(output_path.parent().unwrap()).unwrap();
+          fs::write(output_path, wrapped_code).unwrap();
+        }
+
+        {
+          let code = generate_model_base_actionscript_code(&definition, root_package);
+
+          let relative_path = relative_path.with_file_name(relative_path.file_name().unwrap().to_string_lossy().replace(".proto", "Base.as"));
+          let output_path = output_root.join(&relative_path);
+          let package = relative_path.parent().unwrap().to_string_lossy().replace('/', ".");
+          info!("generate actionscript code into {:?}", output_path);
+
+          let mut full_package = String::new();
+          if let Some(root_package) = root_package {
+            full_package.push_str(root_package);
+            full_package.push_str(".");
+          }
+          full_package.push_str(&package);
+
+          let mut wrapped_code = String::new();
+          wrapped_code.push_str(&code);
+          debug!("{}", wrapped_code);
+
+          fs::create_dir_all(output_path.parent().unwrap()).unwrap();
+          fs::write(output_path, wrapped_code).unwrap();
+        }
+
+        {
+          let code = generate_model_client_interface_actionscript_code(&definition, root_package);
+
+          let relative_path = relative_path.with_file_name("I".to_owned() + &*relative_path.file_name().unwrap().to_string_lossy().replace(".proto", "Base.as"));
+          let output_path = output_root.join(&relative_path);
+          let package = relative_path.parent().unwrap().to_string_lossy().replace('/', ".");
+          info!("generate actionscript code into {:?}", output_path);
+
+          let mut full_package = String::new();
+          if let Some(root_package) = root_package {
+            full_package.push_str(root_package);
+            full_package.push_str(".");
+          }
+          full_package.push_str(&package);
+
+          let mut wrapped_code = String::new();
+          wrapped_code.push_str(&code);
+          debug!("{}", wrapped_code);
+
+          fs::create_dir_all(output_path.parent().unwrap()).unwrap();
+          fs::write(output_path, wrapped_code).unwrap();
+        }
+      } else {
+        let code = match item {
+          ProgramItem::Type(type_def) => {
+            let definition = type_to_definition(type_def).unwrap();
+            debug!("{:?}", definition);
+
+            generate_type_actionscript_code(&definition, root_package)
+          }
+          ProgramItem::Enum(enum_def) => {
+            let definition = enum_to_definition(enum_def).unwrap();
+            debug!("{:?}", definition);
+
+            generate_enum_actionscript_code(&definition, root_package)
+          }
+          _ => continue
+        };
+
+        // let relative_path = relative_path.strip_prefix(&module_root).unwrap();
+        let relative_path = relative_path.with_file_name(relative_path.file_name().unwrap().to_string_lossy().replace(".proto", ".as"));
+        let output_path = output_root.join(&relative_path);
+        let package = relative_path.parent().unwrap().to_string_lossy().replace('/', ".");
+        info!("generate actionscript code into {:?}", output_path);
+
+        let mut full_package = String::new();
+        if let Some(root_package) = root_package {
+          full_package.push_str(root_package);
+          full_package.push_str(".");
+        }
+        full_package.push_str(&package);
+
+        let mut wrapped_code = String::new();
+        wrapped_code.push_str(&code);
+        debug!("{}", wrapped_code);
+
+        fs::create_dir_all(output_path.parent().unwrap()).unwrap();
+        fs::write(output_path, wrapped_code).unwrap();
+      }
+    }
+  }
+}
+
+pub fn convert_constructor_to_type(constructor: ModelConstructor) -> Type {
+  let name = if let Some(meta) = constructor.meta.iter().find(|it| it.key == "client_name") {
+    &meta.value
+  } else {
+    todo!()
+  };
+
+  Type {
+    name: name.to_owned(),
+    fields: constructor.fields,
+    meta: constructor.meta,
+    comments: constructor.comments,
+  }
+}
+
 #[derive(Debug)]
 struct ParsedField {
   pub name: String,
   pub codec: String,
-  pub kind: String
+  pub kind: String,
 }
 
 #[derive(Debug)]
 struct ParsedVariant {
   pub name: String,
-  pub value: i64
+  pub value: i64,
 }
 
 #[derive(Debug)]
 struct ParsedMethod {
   pub name: String,
   pub id: i64,
-  pub params: Vec<ParsedMethodParam>
+  pub params: Vec<ParsedMethodParam>,
 }
 
 #[derive(Debug)]
 struct ParsedMethodParam {
   pub name: String,
   pub codec: String,
-  pub kind: String
+  pub kind: String,
 }
 
 // name -> source root
@@ -201,15 +416,16 @@ fn generate_definition_index(input_root: &Path) {
         ProgramItem::Model(model) => {
           let definition = model_to_definition(model).unwrap();
           (definition.name, format!("{}Base", relative_path))
-        },
+        }
         ProgramItem::Type(type_def) => {
           let definition = type_to_definition(type_def).unwrap();
           (definition.name, relative_path)
-        },
+        }
         ProgramItem::Enum(enum_def) => {
           let definition = enum_to_definition(enum_def).unwrap();
+          ENUM_TYPES.lock().unwrap().insert(definition.name.clone());
           (definition.name, relative_path)
-        },
+        }
         _ => continue
       };
 
@@ -438,7 +654,7 @@ fn generate_protolang_model(input_root: &Path, output_root: &Path) {
       client_methods.push(ParsedMethod {
         name: method_name.to_owned(),
         id: model_id,
-        params: Vec::new()
+        params: Vec::new(),
       });
     }
 
@@ -455,7 +671,7 @@ fn generate_protolang_model(input_root: &Path, output_root: &Path) {
       method.params.push(ParsedMethodParam {
         name: param.to_owned(),
         codec: codec.to_owned(),
-        kind: codec_to_type(codec, false)
+        kind: codec_to_type(codec, false),
       });
     }
 
@@ -472,7 +688,7 @@ fn generate_protolang_model(input_root: &Path, output_root: &Path) {
       server_methods.push(ParsedMethod {
         name: method_name.to_owned(),
         id: model_id,
-        params: Vec::new()
+        params: Vec::new(),
       });
     }
 
@@ -487,13 +703,14 @@ fn generate_protolang_model(input_root: &Path, output_root: &Path) {
       method.params.push(ParsedMethodParam {
         name: param.to_owned(),
         codec: codec.to_owned(),
-        kind: codec_to_type(codec, false)
+        kind: codec_to_type(codec, false),
       });
     }
 
     debug!("CI {:?}", client_methods);
     debug!("SI {:?}", server_methods);
 
+    let project = relative_model_base_path.components().nth(0).map(|it| it.as_os_str().to_string_lossy()).unwrap();
     let model_name = model_base_name.replace("ModelBase", "Model");
     let model = hl::Model {
       name: model_name.clone(),
@@ -503,7 +720,8 @@ fn generate_protolang_model(input_root: &Path, output_root: &Path) {
         let (_, type_def) = generate_protolang_type(&kind, input_root, output_root).unwrap();
         hl::ModelConstructor {
           fields: type_def.fields,
-          comments: type_def.comments
+          meta: type_def.meta,
+          comments: type_def.comments,
         }
       }),
       client_methods: client_methods.iter().map(|it| hl::ClientMethod {
@@ -511,7 +729,8 @@ fn generate_protolang_model(input_root: &Path, output_root: &Path) {
         id: it.id,
         params: it.params.iter().map(|it| hl::Param {
           name: it.name.to_owned(),
-          kind: it.kind.to_owned()
+          kind: it.kind.to_owned(),
+          codec: it.codec.to_owned(),
         }).collect_vec(),
         comments: vec![],
       }).collect_vec(),
@@ -520,18 +739,24 @@ fn generate_protolang_model(input_root: &Path, output_root: &Path) {
         id: it.id,
         params: it.params.iter().map(|it| hl::Param {
           name: it.name.to_owned(),
-          kind: it.kind.to_owned()
+          kind: it.kind.to_owned(),
+          codec: it.codec.to_owned(),
         }).collect_vec(),
         comments: vec![],
       }).collect_vec(),
+      meta: vec![
+        Meta {
+          key: "client_package".to_owned(),
+          // value: format!("{}:{}", project, convert_path_to_definition(&relative_model_base_path).parent().unwrap().to_string_lossy().replace('/', "."))
+          value: convert_path_to_definition(&relative_model_base_path).parent().unwrap().to_string_lossy().replace('/', ".")
+        },
+        Meta { key: "client_name".to_owned(), value: model_name.to_owned() },
+      ],
       comments: vec![
         format!("TODO: This is an automatically generated model definition for \"{}\"", model_name)
       ],
     };
-    let project = relative_model_base_path.components().nth(0).map(|it| it.as_os_str().to_string_lossy()).unwrap();
-    let definition = generate_protolang_code(&model, &[
-      Meta { key: "client_package".to_owned(), value: format!("{}:{}", project, convert_path_to_definition(&relative_model_base_path).parent().unwrap().to_string_lossy().replace('/', ".")) }
-    ]);
+    let definition = generate_protolang_code(&model);
     debug!("{}", definition);
 
     if let Some(constructor) = &model.constructor {
@@ -614,18 +839,14 @@ fn generate_protolang_model(input_root: &Path, output_root: &Path) {
 fn generate_type_code_for(name: &str, project: &str, input_root: &Path, output_root: &Path) -> (PathBuf, String) {
   match generate_protolang_type(name, input_root, output_root) {
     Some((relative_path, type_def)) => {
-      let definition = generate_protolang_code_type(&type_def, &[
-        Meta { key: "client_package".to_owned(), value: format!("{}:{}", project, convert_path_to_definition(&relative_path).parent().unwrap().to_string_lossy().replace('/', ".")) }
-      ]);
+      let definition = generate_protolang_code_type(&type_def);
       (relative_path, definition)
     }
 
     None => match generate_protolang_enum(name, input_root) {
       Some((relative_path, enum_def)) => {
         let project = relative_path.components().nth(0).map(|it| it.as_os_str().to_string_lossy()).unwrap();
-        let definition = generate_protolang_code_enum(&enum_def, &[
-          Meta { key: "client_package".to_owned(), value: format!("{}:{}", project, convert_path_to_definition(&relative_path).parent().unwrap().to_string_lossy().replace('/', ".")) }
-        ]);
+        let definition = generate_protolang_code_enum(&enum_def);
         debug!("{}", definition);
 
         (relative_path, definition)
@@ -681,7 +902,7 @@ fn generate_protolang_type(name: &str, input_root: &Path, output_root: &Path) ->
       fields.push(ParsedField {
         name: field_name.to_owned(),
         codec: codec.to_owned(),
-        kind: codec_to_type(codec, false)
+        kind: codec_to_type(codec, false),
       });
     }
 
@@ -692,9 +913,14 @@ fn generate_protolang_type(name: &str, input_root: &Path, output_root: &Path) ->
       fields: fields.iter().enumerate().map(|(index, it)| hl::Field {
         name: it.name.to_owned(),
         kind: it.kind.to_owned(),
+        codec: it.codec.to_owned(),
         position: index + 1,
         comments: vec![],
       }).collect_vec(),
+      meta: vec![
+        Meta { key: "client_package".to_owned(), value: convert_path_to_definition(&relative_path).parent().unwrap().to_string_lossy().replace('/', ".") },
+        Meta { key: "client_name".to_owned(), value: name.to_owned() },
+      ],
       comments: vec![
         format!("TODO: This is an automatically generated type definition for \"{}\"", name)
       ],
@@ -769,7 +995,7 @@ fn generate_protolang_enum(name: &str, input_root: &Path) -> Option<(PathBuf, hl
 
       variants.push(ParsedVariant {
         name: variant.to_owned(),
-        value
+        value,
       });
     }
 
@@ -783,6 +1009,10 @@ fn generate_protolang_enum(name: &str, input_root: &Path) -> Option<(PathBuf, hl
         value: it.value,
         comments: vec![],
       }).collect_vec(),
+      meta: vec![
+        Meta { key: "client_package".to_owned(), value: convert_path_to_definition(&relative_path).parent().unwrap().to_string_lossy().replace('/', ".") },
+        Meta { key: "client_name".to_owned(), value: name.to_owned() }
+      ],
       comments: vec![
         format!("TODO: This is an automatically generated enum definition for \"{}\"", name)
       ],
@@ -826,7 +1056,20 @@ enum Actions {
     /// Module to generate sources for
     #[arg(long)]
     module: Option<String>,
-  }
+  },
+  GenerateActionscript {
+    input: PathBuf,
+
+    #[arg(short, long)]
+    output: PathBuf,
+
+    #[arg(long)]
+    package: Option<String>,
+
+    /// Module to generate sources for
+    #[arg(long)]
+    module: Option<String>,
+  },
 }
 
 fn main() {
@@ -907,6 +1150,12 @@ fn main() {
       generate_definition_index(input);
       generate_kotlin(package.as_deref(), module.as_deref(), input, output);
     }
+
+    Actions::GenerateActionscript { input, output, package, module } => {
+      generate_module_index(input);
+      generate_definition_index(input);
+      generate_actionscript(package.as_deref(), module.as_deref(), input, output);
+    }
   }
 
   // let (_, type_def) = generate_protolang_type("ExternalAuthParameters");
@@ -985,6 +1234,8 @@ lazy_static! {
   static ref COLLECTION_REGEX: Regex = Regex::new(r"new CollectionCodecInfo\((.+?),\s*(false|true)(?:,\s*\d+)?\)").unwrap();
   static ref MAP_REGEX: Regex = Regex::new(r"new MapCodecInfo\((.+?),\s*(.+?),\s*(false|true)\)").unwrap();
 
+  static ref COLLECTION_REVERSE_REGEX: Regex = Regex::new(r"List<(.+?)(\?)?>").unwrap();
+
   static ref REGEX_1: Regex = Regex::new(r"\bBoolean\b").unwrap();
   static ref REGEX_2: Regex = Regex::new(r"\bByte\b").unwrap();
   static ref REGEX_3: Regex = Regex::new(r"\bShort\b").unwrap();
@@ -1037,6 +1288,10 @@ fn codec_to_type(codec: &str, is_constructor: bool) -> String {
 
 fn convert_to_id(high: i32, low: i32) -> i64 {
   ((u32::from_ne_bytes(i32::to_ne_bytes(high)) as i64) << 32) | (u32::from_ne_bytes(i32::to_ne_bytes(low)) as i64)
+}
+
+fn convert_from_id(id: i64) -> (i32, i32) {
+  ((id >> 32) as i32, (id & 0xffffffff) as i32)
 }
 
 fn convert_path_to_definition(path: &Path) -> PathBuf {
