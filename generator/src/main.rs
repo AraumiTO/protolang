@@ -12,14 +12,14 @@ use clap::{Parser, Subcommand};
 use itertools::Itertools;
 
 use lazy_static::lazy_static;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 use walkdir::WalkDir;
 use protolang_parser::{enum_to_definition, hl, model_to_definition, type_to_definition, ProgramItem, convert_meta, type_to_hl_codec, ENUM_TYPES};
 use regex::Regex;
 use once_cell::sync::Lazy;
 use protolang_parser::hl::{Meta, ModelConstructor, Type};
-use crate::target::actionscript::{generate_enum_actionscript_code, generate_model_base_actionscript_code, generate_model_client_interface_actionscript_code, generate_model_server_actionscript_code, generate_type_actionscript_code};
+use crate::target::actionscript::{convert_type, generate_enum_actionscript_code, generate_model_base_actionscript_code, generate_model_client_interface_actionscript_code, generate_model_server_actionscript_code, generate_type_actionscript_code};
 use crate::target::kotlin::{generate_enum_kotlin_code, generate_model_kotlin_code, generate_type_kotlin_code};
 use crate::target::protolang::{generate_protolang_code, generate_protolang_code_enum, generate_protolang_code_type};
 
@@ -40,7 +40,7 @@ fn generate_kotlin(root_package: Option<&str>, module: Option<&str>, input_root:
       continue;
     }
 
-    let file_module = get_path_module(relative_path);
+    let file_module = get_path_module(input_root, relative_path);
     debug!("Module: {:?}", file_module);
     let (file_module, module_root) = match file_module {
       Some(module) => module,
@@ -147,7 +147,7 @@ fn generate_actionscript(root_package: Option<&str>, module: Option<&str>, input
       continue;
     }
 
-    let file_module = get_path_module(relative_path);
+    let file_module = get_path_module(input_root, relative_path);
     debug!("Module: {:?}", file_module);
     let (file_module, module_root) = match file_module {
       Some(module) => module,
@@ -194,15 +194,26 @@ fn generate_actionscript(root_package: Option<&str>, module: Option<&str>, input
         if let Some(constructor) = definition.constructor.as_ref() {
           let type_def = convert_constructor_to_type(constructor.to_owned());
           let code = generate_type_actionscript_code(&type_def, root_package);
+          let client_package = if let Some(meta) = type_def.meta.iter().find(|it| it.key == "client_package") {
+            &meta.value
+          } else {
+            todo!()
+          };
+
           let class_name = if let Some(meta) = type_def.meta.iter().find(|it| it.key == "client_name") {
             &meta.value
           } else {
             &type_def.name
           };
 
-          let relative_path = relative_path.with_file_name(format!("{}.as", class_name));
+          if EXISTING_TYPES.lock().unwrap().contains(class_name) {
+            continue;
+          }
+          EXISTING_TYPES.lock().unwrap().insert(class_name.to_owned());
+
+          let package = client_package.replace('.', "/");
+          let relative_path = format!("{}/{}.as", package, class_name);
           let output_path = output_root.join(&relative_path);
-          let package = relative_path.parent().unwrap().to_string_lossy().replace('/', ".");
           info!("generate actionscript code into {:?}", output_path);
 
           let mut full_package = String::new();
@@ -551,6 +562,65 @@ fn generate_model_index(input_root: &Path) {
   }
 
   info!("model index generated");
+}
+
+fn generate_constructor_index(input_root: &Path) {
+  info!("generating constructor index...");
+
+  for entry in WalkDir::new(input_root) {
+    let entry = entry.unwrap();
+    let path = entry.path();
+    let relative_path = path.strip_prefix(input_root).unwrap();
+    if is_path_hidden(relative_path) {
+      continue;
+    }
+
+    if !entry.file_type().is_file() {
+      continue;
+    }
+
+    if !path.extension().is_some_and(|it| it == "proto") {
+      continue;
+    }
+
+    debug!("Parsing {:?}...", path);
+    let content = fs::read_to_string(path).unwrap();
+
+    let tokens = protolang_parser::tokenizer(&content).unwrap();
+    let mut iter = itertools::multipeek(&tokens);
+    let ast = protolang_parser::parse_program(&mut iter).unwrap();
+
+    let relative_path = relative_path.to_string_lossy().replace(".proto", "").replace('/', ".");
+
+    for item in &ast.body {
+      let relative_path = relative_path.clone();
+      match item {
+        ProgramItem::Model(model) => {
+          let definition = model_to_definition(model).unwrap();
+          if let Some(constructor) = &definition.constructor {
+            let constructor_package_name = if let Some(meta) = constructor.meta.iter().find(|it| it.key == "client_package") {
+              &meta.value
+            } else {
+              todo!()
+            };
+            let constructor_class_name = if let Some(meta) = constructor.meta.iter().find(|it| it.key == "client_name") {
+              &meta.value
+            } else {
+              todo!()
+            };
+
+            let value = format!("{}.{}", constructor_package_name, constructor_class_name);
+            debug!("registered {} -> {}", format!("{}Base.Constructor", definition.name), value);
+            DEFINITION_FQN.lock().unwrap().insert(format!("{}.Constructor", definition.name), value.clone());
+            DEFINITION_FQN.lock().unwrap().insert(format!("{}Base.Constructor", definition.name), value);
+          }
+        }
+        _ => continue
+      };
+    }
+  }
+
+  info!("constructor index generated");
 }
 
 fn generate_protolang_model(input_root: &Path, output_root: &Path) {
@@ -1080,63 +1150,63 @@ fn main() {
 
   let args = Args::parse();
 
-  {
-    let mut types = EXISTING_TYPES.lock().unwrap();
-    let mut paths = BUILTIN_FQN.lock().unwrap();
-
-    types.insert("bool".to_owned());
-    types.insert("i8".to_owned());
-    types.insert("i16".to_owned());
-    types.insert("i32".to_owned());
-    types.insert("i64".to_owned());
-    types.insert("f32".to_owned());
-    types.insert("f64".to_owned());
-    types.insert("String".to_owned());
-
-    for ty in types.iter() {
-      // Primitives are globally available
-      paths.insert(ty.to_owned(), ty.to_owned());
-    }
-
-    types.insert("Instant".to_owned());
-    paths.insert("Instant".to_owned(), "kotlinx.datetime.Instant".to_owned());
-    types.insert("IGameObject".to_owned());
-    paths.insert("IGameObject".to_owned(), "jp.assasans.araumi.architecture.objects.IGameObject".to_owned());
-
-    types.insert("Object".to_owned()); // synthetic
-
-    types.insert("ObjectsData".to_owned());
-    paths.insert("ObjectsData".to_owned(), "jp.assasans.araumi.protocol.codec.ObjectsData".to_owned());
-    types.insert("ObjectsDependencies".to_owned());
-    paths.insert("ObjectsDependencies".to_owned(), "jp.assasans.araumi.protocol.codec.ObjectsDependencies".to_owned());
-    types.insert("ModelData".to_owned());
-    paths.insert("ModelData".to_owned(), "jp.assasans.araumi.protocol.codec.ModelData".to_owned());
-
-    types.insert("MoveCommand".to_owned());
-    paths.insert("MoveCommand".to_owned(), "jp.assasans.araumi.protocol.codec.MoveCommand".to_owned());
-
-    types.insert("Resource".to_owned());
-    paths.insert("Resource".to_owned(), "jp.assasans.araumi.resources.Resource".to_owned());
-    types.insert("SoundResource".to_owned());
-    paths.insert("SoundResource".to_owned(), "jp.assasans.araumi.resources.SoundResource".to_owned());
-    types.insert("MapResource".to_owned());
-    paths.insert("MapResource".to_owned(), "jp.assasans.araumi.resources.MapResource".to_owned());
-    types.insert("ProplibResource".to_owned());
-    paths.insert("ProplibResource".to_owned(), "jp.assasans.araumi.resources.ProplibResource".to_owned());
-    types.insert("TextureResource".to_owned());
-    paths.insert("TextureResource".to_owned(), "jp.assasans.araumi.resources.TextureResource".to_owned());
-    types.insert("ImageResource".to_owned());
-    paths.insert("ImageResource".to_owned(), "jp.assasans.araumi.resources.ImageResource".to_owned());
-    types.insert("MultiframeTextureResource".to_owned());
-    paths.insert("MultiframeTextureResource".to_owned(), "jp.assasans.araumi.resources.MultiframeTextureResource".to_owned());
-    types.insert("LocalizedImageResource".to_owned());
-    paths.insert("LocalizedImageResource".to_owned(), "jp.assasans.araumi.resources.LocalizedImageResource".to_owned());
-    types.insert("Object3DResource".to_owned());
-    paths.insert("Object3DResource".to_owned(), "jp.assasans.araumi.resources.Object3DResource".to_owned());
-  }
-
   match &args.command {
     Actions::GenerateProtolang { input, output } => {
+      {
+        let mut types = EXISTING_TYPES.lock().unwrap();
+        let mut paths = BUILTIN_FQN.lock().unwrap();
+
+        types.insert("bool".to_owned());
+        types.insert("i8".to_owned());
+        types.insert("i16".to_owned());
+        types.insert("i32".to_owned());
+        types.insert("i64".to_owned());
+        types.insert("f32".to_owned());
+        types.insert("f64".to_owned());
+        types.insert("String".to_owned());
+
+        for ty in types.iter() {
+          // Primitives are globally available
+          paths.insert(ty.to_owned(), ty.to_owned());
+        }
+
+        types.insert("Instant".to_owned());
+        paths.insert("Instant".to_owned(), "kotlinx.datetime.Instant".to_owned());
+        types.insert("IGameObject".to_owned());
+        paths.insert("IGameObject".to_owned(), "jp.assasans.araumi.architecture.objects.IGameObject".to_owned());
+
+        types.insert("Object".to_owned()); // synthetic
+
+        types.insert("ObjectsData".to_owned());
+        paths.insert("ObjectsData".to_owned(), "jp.assasans.araumi.protocol.codec.ObjectsData".to_owned());
+        types.insert("ObjectsDependencies".to_owned());
+        paths.insert("ObjectsDependencies".to_owned(), "jp.assasans.araumi.protocol.codec.ObjectsDependencies".to_owned());
+        types.insert("ModelData".to_owned());
+        paths.insert("ModelData".to_owned(), "jp.assasans.araumi.protocol.codec.ModelData".to_owned());
+
+        types.insert("MoveCommand".to_owned());
+        paths.insert("MoveCommand".to_owned(), "jp.assasans.araumi.protocol.codec.MoveCommand".to_owned());
+
+        types.insert("Resource".to_owned());
+        paths.insert("Resource".to_owned(), "jp.assasans.araumi.resources.Resource".to_owned());
+        types.insert("SoundResource".to_owned());
+        paths.insert("SoundResource".to_owned(), "jp.assasans.araumi.resources.SoundResource".to_owned());
+        types.insert("MapResource".to_owned());
+        paths.insert("MapResource".to_owned(), "jp.assasans.araumi.resources.MapResource".to_owned());
+        types.insert("ProplibResource".to_owned());
+        paths.insert("ProplibResource".to_owned(), "jp.assasans.araumi.resources.ProplibResource".to_owned());
+        types.insert("TextureResource".to_owned());
+        paths.insert("TextureResource".to_owned(), "jp.assasans.araumi.resources.TextureResource".to_owned());
+        types.insert("ImageResource".to_owned());
+        paths.insert("ImageResource".to_owned(), "jp.assasans.araumi.resources.ImageResource".to_owned());
+        types.insert("MultiframeTextureResource".to_owned());
+        paths.insert("MultiframeTextureResource".to_owned(), "jp.assasans.araumi.resources.MultiframeTextureResource".to_owned());
+        types.insert("LocalizedImageResource".to_owned());
+        paths.insert("LocalizedImageResource".to_owned(), "jp.assasans.araumi.resources.LocalizedImageResource".to_owned());
+        types.insert("Object3DResource".to_owned());
+        paths.insert("Object3DResource".to_owned(), "jp.assasans.araumi.resources.Object3DResource".to_owned());
+      }
+
       generate_model_index(input);
       for (constructor_name, model_name) in MODEL_TYPES.lock().unwrap().iter() {
         debug!("{} -> {}", constructor_name, model_name);
@@ -1146,14 +1216,98 @@ fn main() {
     }
 
     Actions::GenerateKotlin { input, output, package, module } => {
+      {
+        let mut types = EXISTING_TYPES.lock().unwrap();
+        let mut paths = BUILTIN_FQN.lock().unwrap();
+
+        types.insert("bool".to_owned());
+        types.insert("i8".to_owned());
+        types.insert("i16".to_owned());
+        types.insert("i32".to_owned());
+        types.insert("i64".to_owned());
+        types.insert("f32".to_owned());
+        types.insert("f64".to_owned());
+        types.insert("String".to_owned());
+
+        for ty in types.iter() {
+          // Primitives are globally available
+          paths.insert(ty.to_owned(), ty.to_owned());
+        }
+
+        types.insert("Instant".to_owned());
+        paths.insert("Instant".to_owned(), "kotlinx.datetime.Instant".to_owned());
+        types.insert("IGameObject".to_owned());
+        paths.insert("IGameObject".to_owned(), "jp.assasans.araumi.architecture.objects.IGameObject".to_owned());
+
+        types.insert("Object".to_owned()); // synthetic
+
+        types.insert("ObjectsData".to_owned());
+        paths.insert("ObjectsData".to_owned(), "jp.assasans.araumi.protocol.codec.ObjectsData".to_owned());
+        types.insert("ObjectsDependencies".to_owned());
+        paths.insert("ObjectsDependencies".to_owned(), "jp.assasans.araumi.protocol.codec.ObjectsDependencies".to_owned());
+        types.insert("ModelData".to_owned());
+        paths.insert("ModelData".to_owned(), "jp.assasans.araumi.protocol.codec.ModelData".to_owned());
+
+        types.insert("MoveCommand".to_owned());
+        paths.insert("MoveCommand".to_owned(), "jp.assasans.araumi.protocol.codec.MoveCommand".to_owned());
+
+        types.insert("Resource".to_owned());
+        paths.insert("Resource".to_owned(), "jp.assasans.araumi.resources.Resource".to_owned());
+        types.insert("SoundResource".to_owned());
+        paths.insert("SoundResource".to_owned(), "jp.assasans.araumi.resources.SoundResource".to_owned());
+        types.insert("MapResource".to_owned());
+        paths.insert("MapResource".to_owned(), "jp.assasans.araumi.resources.MapResource".to_owned());
+        types.insert("ProplibResource".to_owned());
+        paths.insert("ProplibResource".to_owned(), "jp.assasans.araumi.resources.ProplibResource".to_owned());
+        types.insert("TextureResource".to_owned());
+        paths.insert("TextureResource".to_owned(), "jp.assasans.araumi.resources.TextureResource".to_owned());
+        types.insert("ImageResource".to_owned());
+        paths.insert("ImageResource".to_owned(), "jp.assasans.araumi.resources.ImageResource".to_owned());
+        types.insert("MultiframeTextureResource".to_owned());
+        paths.insert("MultiframeTextureResource".to_owned(), "jp.assasans.araumi.resources.MultiframeTextureResource".to_owned());
+        types.insert("LocalizedImageResource".to_owned());
+        paths.insert("LocalizedImageResource".to_owned(), "jp.assasans.araumi.resources.LocalizedImageResource".to_owned());
+        types.insert("Object3DResource".to_owned());
+        paths.insert("Object3DResource".to_owned(), "jp.assasans.araumi.resources.Object3DResource".to_owned());
+      }
+
       generate_module_index(input);
       generate_definition_index(input);
       generate_kotlin(package.as_deref(), module.as_deref(), input, output);
     }
 
     Actions::GenerateActionscript { input, output, package, module } => {
+      {
+        let mut paths = BUILTIN_FQN.lock().unwrap();
+
+        paths.insert("Dictionary".to_owned(), "flash.utils.Dictionary".to_owned());
+
+        paths.insert("Byte".to_owned(), "int".to_owned());
+        paths.insert("Short".to_owned(), "int".to_owned());
+        paths.insert("Long".to_owned(), "alternativa.types.Long".to_owned());
+        paths.insert("Float".to_owned(), "alternativa.types.Float".to_owned());
+        paths.insert("IGameObject".to_owned(), "platform.client.fp10.core.type.IGameObject".to_owned());
+
+        paths.insert("ObjectsData".to_owned(), "platform.client.core.general.spaces.loading.dispatcher.types.ObjectsData".to_owned());
+        paths.insert("ObjectsDependencies".to_owned(), "platform.client.core.general.spaces.loading.dispatcher.types.ObjectsDependencies".to_owned());
+        paths.insert("ModelData".to_owned(), "platform.client.core.general.spaces.loading.modelconstructors.ModelData".to_owned());
+
+        paths.insert("MoveCommand".to_owned(), "projects.tanks.client.battlefield.models.user.tank.commands.MoveCommand".to_owned());
+
+        paths.insert("Resource".to_owned(), "platform.client.fp10.core.resource.Resource".to_owned());
+        paths.insert("SoundResource".to_owned(), "platform.client.fp10.core.resource.types.SoundResource".to_owned());
+        paths.insert("MapResource".to_owned(), "projects.tanks.clients.flash.resources.resource.MapResource".to_owned());
+        paths.insert("ProplibResource".to_owned(), "projects.tanks.clients.flash.resources.resource.ProplibResource".to_owned());
+        paths.insert("TextureResource".to_owned(), "platform.client.fp10.core.resource.types.TextureResource".to_owned());
+        paths.insert("ImageResource".to_owned(), "platform.client.fp10.core.resource.types.ImageResource".to_owned());
+        paths.insert("MultiframeTextureResource".to_owned(), "platform.client.fp10.core.resource.types.MultiframeTextureResource".to_owned());
+        paths.insert("LocalizedImageResource".to_owned(), "platform.client.fp10.core.resource.types.LocalizedImageResource".to_owned());
+        paths.insert("Tanks3DSResource".to_owned(), "projects.tanks.clients.flash.resources.resource.Tanks3DSResource".to_owned());
+      }
+
       generate_module_index(input);
       generate_definition_index(input);
+      generate_constructor_index(input);
       generate_actionscript(package.as_deref(), module.as_deref(), input, output);
     }
   }
@@ -1199,12 +1353,23 @@ fn generate_module_index(input_root: &Path) {
   }
 }
 
-fn get_path_module(relative_path: &Path) -> Option<(String, String)> {
-  let modules = MODULES.lock().unwrap();
-  for (module_name, module_root) in modules.iter() {
-    if relative_path.starts_with(module_root) {
-      return Some((module_name.to_owned(), module_root.to_owned()));
+fn get_path_module(input_root: &Path, relative_path: &Path) -> Option<(String, String)> {
+  let module_dir = relative_path.to_path_buf();
+  let mut module_dir = module_dir.parent();
+  while let Some(some_module_dir) = module_dir {
+    let module_path = input_root.join(some_module_dir).join("module.yaml");
+    if module_path.exists() {
+      let module_name = some_module_dir.to_string_lossy().to_string();
+      if module_name == "" {
+        info!("module \"root\" for {:?}", relative_path);
+        return Some(("root".to_owned(), "".to_owned()));
+      }
+
+      info!("module {:?} for {:?}", module_name, relative_path);
+      return Some((module_name, "".to_owned()));
     }
+
+    module_dir = some_module_dir.parent();
   }
   None
 }
@@ -1228,7 +1393,7 @@ fn parse_id_from_dec_or_hex(value: &str) -> i32 {
 }
 
 lazy_static! {
-  static ref TYPES_IN_GENERIC_REGEX: Regex = Regex::new(r"<([\w\s,?]+)>").unwrap();
+  static ref TYPES_IN_GENERIC_REGEX: Regex = Regex::new(r"\.?<([\w\s,.?]+)>").unwrap();
 
   static ref TYPE_REGEX: Regex = Regex::new(r"new (?:Type|Enum)CodecInfo\((.+?),\s*(false|true)\)").unwrap();
   static ref COLLECTION_REGEX: Regex = Regex::new(r"new CollectionCodecInfo\((.+?),\s*(false|true)(?:,\s*\d+)?\)").unwrap();
@@ -1295,7 +1460,8 @@ fn convert_from_id(id: i64) -> (i32, i32) {
 }
 
 fn convert_path_to_definition(path: &Path) -> PathBuf {
-  let relative_to_source_root = path.components().skip(3).collect::<PathBuf>();
+  warn!("convert path: {:?}", path);
+  let relative_to_source_root = path.components().skip(2).collect::<PathBuf>();
   if relative_to_source_root.components().nth(0).unwrap().as_os_str() == "_codec" {
     relative_to_source_root.components().skip(1).collect::<PathBuf>()
   } else {

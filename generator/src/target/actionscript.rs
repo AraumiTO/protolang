@@ -1,11 +1,11 @@
 use itertools::Itertools;
 use lazy_static::lazy_static;
-use regex::Regex;
-use tracing::error;
+use regex::{escape, Regex};
+use tracing::{error, warn};
 
 use protolang_parser::hl::{Enum, Model, Type};
 
-use crate::{BUILTIN_FQN, convert_from_id, DEFINITION_FQN, REGEX_CACHE};
+use crate::{BUILTIN_FQN, convert_from_id, DEFINITION_FQN, REGEX_CACHE, get_types_from_generic};
 
 pub fn generate_model_server_actionscript_code(model: &Model, root_package: Option<&str>) -> String {
   let mut builder = String::new();
@@ -26,13 +26,31 @@ pub fn generate_model_server_actionscript_code(model: &Model, root_package: Opti
   import alternativa.protocol.OptionalMap;
   import alternativa.protocol.ProtocolBuffer;
   import alternativa.protocol.info.TypeCodecInfo;
+  import alternativa.protocol.info.EnumCodecInfo;
+  import alternativa.protocol.info.CollectionCodecInfo;
+  import alternativa.protocol.info.MapCodecInfo;
   import alternativa.types.Long;
   import flash.utils.ByteArray;
   import platform.client.fp10.core.model.IModel;
   import platform.client.fp10.core.model.impl.Model;
   import platform.client.fp10.core.network.command.SpaceCommand;
   import platform.client.fp10.core.type.IGameObject;
-  import platform.client.fp10.core.type.ISpace;"#);
+  import platform.client.fp10.core.type.ISpace;
+"#);
+
+  let mut imports = Vec::<String>::new();
+  for method in &model.server_methods {
+    for param in &method.params {
+      imports.append(&mut get_types_from_generic(&convert_type(&param.kind, root_package)));
+    }
+  }
+  for method in &model.client_methods {
+    for param in &method.params {
+      imports.append(&mut get_types_from_generic(&convert_type(&param.kind, root_package)));
+    }
+  }
+  let imports = imports.iter().unique().map(|import| format!("  import {};", import)).join("\n");
+  builder.push_str(&imports);
   builder.push_str("\n\n");
 
   let class_name = if let Some(meta) = model.meta.iter().find(|it| it.key == "client_name") {
@@ -121,10 +139,31 @@ pub fn generate_model_base_actionscript_code(model: &Model, root_package: Option
   import alternativa.protocol.IProtocol;
   import alternativa.protocol.ProtocolBuffer;
   import alternativa.protocol.info.TypeCodecInfo;
+  import alternativa.protocol.info.EnumCodecInfo;
+  import alternativa.protocol.info.CollectionCodecInfo;
+  import alternativa.protocol.info.MapCodecInfo;
   import alternativa.types.Long;
   import platform.client.fp10.core.model.IModel;
   import platform.client.fp10.core.model.impl.Model;
-  import platform.client.fp10.core.registry.ModelRegistry;"#);
+  import platform.client.fp10.core.registry.ModelRegistry;
+"#);
+
+  let mut imports = Vec::<String>::new();
+  if let Some(constructor) = &model.constructor {
+    imports.append(&mut get_types_from_generic(&convert_type(&format!("{}Base.Constructor", model.name), root_package)));
+  }
+  for method in &model.server_methods {
+    for param in &method.params {
+      imports.append(&mut get_types_from_generic(&convert_type(&param.kind, root_package)));
+    }
+  }
+  for method in &model.client_methods {
+    for param in &method.params {
+      imports.append(&mut get_types_from_generic(&convert_type(&param.kind, root_package)));
+    }
+  }
+  let imports = imports.iter().unique().map(|import| format!("  import {};", import)).join("\n");
+  builder.push_str(&imports);
   builder.push_str("\n\n");
 
   let class_name = if let Some(meta) = model.meta.iter().find(|it| it.key == "client_name") {
@@ -135,7 +174,7 @@ pub fn generate_model_base_actionscript_code(model: &Model, root_package: Option
   builder.push_str(&format!("  public class {}Base extends Model {{\n", class_name));
 
   builder.push_str("    private var _protocol:IProtocol;\n");
-  builder.push_str(&format!("    protected var server:{}Sever;\n", class_name));
+  builder.push_str(&format!("    protected var server:{}Server;\n", class_name));
   builder.push_str(&format!("    private var client:I{}Base;\n", class_name));
   builder.push_str("    private var modelId:Long;\n");
   builder.push_str("\n");
@@ -235,6 +274,21 @@ pub fn generate_model_client_interface_actionscript_code(model: &Model, root_pac
   }
   builder.push_str(&format!("package {} {{\n", full_package));
 
+  let mut imports = Vec::<String>::new();
+  for method in &model.server_methods {
+    for param in &method.params {
+      imports.append(&mut get_types_from_generic(&convert_type(&param.kind, root_package)));
+    }
+  }
+  for method in &model.client_methods {
+    for param in &method.params {
+      imports.append(&mut get_types_from_generic(&convert_type(&param.kind, root_package)));
+    }
+  }
+  let imports = imports.iter().unique().map(|import| format!("  import {};", import)).join("\n");
+  builder.push_str(&imports);
+  builder.push_str("\n\n");
+
   let class_name = if let Some(meta) = model.meta.iter().find(|it| it.key == "client_name") {
     &meta.value
   } else {
@@ -271,6 +325,14 @@ pub fn generate_type_actionscript_code(type_def: &Type, root_package: Option<&st
   }
   builder.push_str(&format!("package {} {{\n", full_package));
 
+  let mut imports = Vec::<String>::new();
+  for field in &type_def.fields {
+    imports.append(&mut get_types_from_generic(&convert_type(&field.kind, root_package)));
+  }
+  let imports = imports.iter().unique().map(|import| format!("  import {};", import)).join("\n");
+  builder.push_str(&imports);
+  builder.push_str("\n\n");
+
   let class_name = if let Some(meta) = type_def.meta.iter().find(|it| it.key == "client_name") {
     &meta.value
   } else {
@@ -293,7 +355,13 @@ pub fn generate_type_actionscript_code(type_def: &Type, root_package: Option<&st
   let mut params = Vec::new();
   for field in &type_def.fields {
     let native_type = convert_type(&field.kind, root_package);
-    params.push(format!("{}:{}", field.name, native_type));
+    let default = match native_type.as_str() {
+      "int" => "0",
+      "Number" => "0",
+      "Boolean" => "false",
+      _ => "null"
+    };
+    params.push(format!("{}:{} = {}", field.name, native_type, default));
   }
   builder.push_str(&format!("    public function {}({}) {{\n", class_name, params.join(", ")));
   builder.push_str("      super();\n");
@@ -419,7 +487,7 @@ lazy_static! {
   static ref REGEX_8: Regex = Regex::new(r"\bObject3DResource\b").unwrap();
   static ref REGEX_9: Regex = Regex::new(r"\bInstant\b").unwrap();
   static ref REGEX_10: Regex = Regex::new(r"\bList<").unwrap();
-  static ref REGEX_11: Regex = Regex::new(r"\bMap<").unwrap();
+  static ref REGEX_11: Regex = Regex::new(r"\bMap<.+>").unwrap();
   static ref REGEX_NULLABLE: Regex = Regex::new(r"\?").unwrap();
 }
 
@@ -434,7 +502,7 @@ pub fn convert_type(value: &str, root_package: Option<&str>) -> String {
   let value = REGEX_8.replace_all(&value, "Tanks3DSResource");
   let value = REGEX_9.replace_all(&value, "Date");
   let value = REGEX_10.replace_all(&value, "Vector.<");
-  let value = REGEX_11.replace_all(&value, "Map.<");
+  let value = REGEX_11.replace_all(&value, "Dictionary");
   let value = REGEX_NULLABLE.replace_all(&value, "");
 
   let mut cache = REGEX_CACHE.lock().unwrap();
@@ -443,21 +511,32 @@ pub fn convert_type(value: &str, root_package: Option<&str>) -> String {
   let mut value = value.to_string();
   let paths = BUILTIN_FQN.lock().unwrap();
   for (simple_name, full_name) in paths.iter() {
-    let regex = cache.entry(simple_name.to_owned()).or_insert_with(|| Regex::new(&format!(r"\b{}\b", simple_name)).unwrap());
+    let regex = cache.entry(simple_name.to_owned()).or_insert_with(|| Regex::new(&format!(r"\b{}\b", escape(simple_name))).unwrap());
     value = regex.replace_all(&value, full_name).to_string();
   }
 
   let definitions = DEFINITION_FQN.lock().unwrap();
+  let mut count = 0;
   for (simple_name, full_name) in definitions.iter() {
-    let mut full_package = String::new();
+    let mut fqn = String::new();
     if let Some(root_package) = root_package {
-      full_package.push_str(root_package);
-      full_package.push_str(".");
+      fqn.push_str(root_package);
+      fqn.push_str(".");
     }
-    full_package.push_str(full_name);
+    fqn.push_str(full_name);
 
-    let regex = cache.entry(simple_name.to_owned()).or_insert_with(|| Regex::new(&format!(r"\b{}\b", simple_name)).unwrap());
-    value = regex.replace_all(&value, full_package).to_string();
+    // Replace all "ShortName" with "fqn.FullName"
+    let regex = cache.entry(simple_name.to_owned()).or_insert_with(|| Regex::new(&format!(r"\b{}\b", escape(simple_name))).unwrap());
+    let old_value = value.clone();
+    value = regex.replace_all(&value, fqn).to_string();
+    if value != old_value {
+      count += 1;
+
+      warn!("replaced {count}");
+      warn!("replaced {old_value} -> {value}");
+      break;
+      if count > 1 {}
+    }
   }
 
   value.to_string()
