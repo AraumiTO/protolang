@@ -19,7 +19,7 @@ use protolang_parser::{enum_to_definition, hl, model_to_definition, type_to_defi
 use regex::Regex;
 use once_cell::sync::Lazy;
 use protolang_parser::hl::{Meta, ModelConstructor, Type};
-use crate::target::actionscript::{convert_type, generate_enum_actionscript_code, generate_model_base_actionscript_code, generate_model_client_interface_actionscript_code, generate_model_server_actionscript_code, generate_type_actionscript_code};
+use crate::target::actionscript::{convert_type, generate_enum_actionscript_code, generate_enum_codec_actionscript_code, generate_model_base_actionscript_code, generate_model_client_interface_actionscript_code, generate_model_server_actionscript_code, generate_type_actionscript_code, generate_type_codec_actionscript_code};
 use crate::target::kotlin::{generate_enum_kotlin_code, generate_model_kotlin_code, generate_type_kotlin_code};
 use crate::target::protolang::{generate_protolang_code, generate_protolang_code_enum, generate_protolang_code_type};
 
@@ -193,7 +193,6 @@ fn generate_actionscript(root_package: Option<&str>, module: Option<&str>, input
 
         if let Some(constructor) = definition.constructor.as_ref() {
           let type_def = convert_constructor_to_type(constructor.to_owned());
-          let code = generate_type_actionscript_code(&type_def, root_package);
           let client_package = if let Some(meta) = type_def.meta.iter().find(|it| it.key == "client_package") {
             &meta.value
           } else {
@@ -211,24 +210,44 @@ fn generate_actionscript(root_package: Option<&str>, module: Option<&str>, input
           }
           EXISTING_TYPES.lock().unwrap().insert(class_name.to_owned());
 
-          let package = client_package.replace('.', "/");
-          let relative_path = format!("{}/{}.as", package, class_name);
-          let output_path = output_root.join(&relative_path);
-          info!("generate actionscript code into {:?}", output_path);
+          // type
+          {
+            let code = generate_type_actionscript_code(&type_def, root_package);
+            let package = client_package.replace('.', "/");
+            let relative_path = format!("{}/{}.as", package, class_name);
+            let output_path = output_root.join(&relative_path);
+            info!("generate actionscript code into {:?}", output_path);
 
-          let mut full_package = String::new();
-          if let Some(root_package) = root_package {
-            full_package.push_str(root_package);
-            full_package.push_str(".");
+            let mut full_package = String::new();
+            if let Some(root_package) = root_package {
+              full_package.push_str(root_package);
+              full_package.push_str(".");
+            }
+            full_package.push_str(&package);
+
+            let mut wrapped_code = String::new();
+            wrapped_code.push_str(&code);
+            debug!("{}", wrapped_code);
+
+            fs::create_dir_all(output_path.parent().unwrap()).unwrap();
+            fs::write(output_path, wrapped_code).unwrap();
           }
-          full_package.push_str(&package);
 
-          let mut wrapped_code = String::new();
-          wrapped_code.push_str(&code);
-          debug!("{}", wrapped_code);
+          // type codec
+          {
+            let code = generate_type_codec_actionscript_code(&type_def, root_package);
+            let package = client_package.replace('.', "/");
+            let relative_path = format!("_codec/{}/Codec{}.as", package, class_name);
+            let output_path = output_root.join(&relative_path);
+            info!("generate actionscript code into {:?}", output_path);
 
-          fs::create_dir_all(output_path.parent().unwrap()).unwrap();
-          fs::write(output_path, wrapped_code).unwrap();
+            let mut wrapped_code = String::new();
+            wrapped_code.push_str(&code);
+            debug!("{}", wrapped_code);
+
+            fs::create_dir_all(output_path.parent().unwrap()).unwrap();
+            fs::write(output_path, wrapped_code).unwrap();
+          }
         }
 
         {
@@ -300,18 +319,40 @@ fn generate_actionscript(root_package: Option<&str>, module: Option<&str>, input
           fs::write(output_path, wrapped_code).unwrap();
         }
       } else {
-        let code = match item {
+        let (client_package, client_name, code) = match item {
           ProgramItem::Type(type_def) => {
             let definition = type_to_definition(type_def).unwrap();
             debug!("{:?}", definition);
 
-            generate_type_actionscript_code(&definition, root_package)
+            let client_package = if let Some(meta) = type_def.meta.iter().find(|it| it.key.value.0 == "client_package") {
+              meta.value.value.0.to_owned()
+            } else {
+              todo!()
+            };
+            let class_name = if let Some(meta) = type_def.meta.iter().find(|it| it.key.value.0 == "client_name") {
+              meta.value.value.0.to_owned()
+            } else {
+              todo!()
+            };
+
+            (client_package, class_name, generate_type_actionscript_code(&definition, root_package))
           }
           ProgramItem::Enum(enum_def) => {
             let definition = enum_to_definition(enum_def).unwrap();
             debug!("{:?}", definition);
 
-            generate_enum_actionscript_code(&definition, root_package)
+            let client_package = if let Some(meta) = enum_def.meta.iter().find(|it| it.key.value.0 == "client_package") {
+              meta.value.value.0.to_owned()
+            } else {
+              todo!()
+            };
+            let class_name = if let Some(meta) = enum_def.meta.iter().find(|it| it.key.value.0 == "client_name") {
+              meta.value.value.0.to_owned()
+            } else {
+              todo!()
+            };
+
+            (client_package, class_name, generate_enum_actionscript_code(&definition, root_package))
           }
           _ => continue
         };
@@ -320,7 +361,7 @@ fn generate_actionscript(root_package: Option<&str>, module: Option<&str>, input
         let relative_path = relative_path.with_file_name(relative_path.file_name().unwrap().to_string_lossy().replace(".proto", ".as"));
         let output_path = output_root.join(&relative_path);
         let package = relative_path.parent().unwrap().to_string_lossy().replace('/', ".");
-        info!("generate actionscript code into {:?}", output_path);
+        info!("generate type actionscript code into {:?}", output_path);
 
         let mut full_package = String::new();
         if let Some(root_package) = root_package {
@@ -335,6 +376,37 @@ fn generate_actionscript(root_package: Option<&str>, module: Option<&str>, input
 
         fs::create_dir_all(output_path.parent().unwrap()).unwrap();
         fs::write(output_path, wrapped_code).unwrap();
+
+        // type codec
+        {
+          let code = match item {
+            ProgramItem::Type(type_def) => {
+              let definition = type_to_definition(type_def).unwrap();
+              debug!("{:?}", definition);
+
+              generate_type_codec_actionscript_code(&definition, root_package)
+            }
+            ProgramItem::Enum(enum_def) => {
+              let definition = enum_to_definition(enum_def).unwrap();
+              debug!("{:?}", definition);
+
+              generate_enum_codec_actionscript_code(&definition, root_package)
+            }
+            _ => continue
+          };
+
+          let package = client_package.replace('.', "/");
+          let relative_path = format!("_codec/{}/Codec{}.as", package, client_name);
+          let output_path = output_root.join(&relative_path);
+          info!("generate type codec actionscript code into {:?}", output_path);
+
+          let mut wrapped_code = String::new();
+          wrapped_code.push_str(&code);
+          debug!("{}", wrapped_code);
+
+          fs::create_dir_all(output_path.parent().unwrap()).unwrap();
+          fs::write(output_path, wrapped_code).unwrap();
+        }
       }
     }
   }
@@ -609,10 +681,11 @@ fn generate_constructor_index(input_root: &Path) {
               todo!()
             };
 
-            let value = format!("{}.{}", constructor_package_name, constructor_class_name);
+            let value = format!("{}.{}", constructor_package_name, constructor_class_name.clone());
             debug!("registered {} -> {}", format!("{}Base.Constructor", definition.name), value);
             DEFINITION_FQN.lock().unwrap().insert(format!("{}.Constructor", definition.name), value.clone());
-            DEFINITION_FQN.lock().unwrap().insert(format!("{}Base.Constructor", definition.name), value);
+            DEFINITION_FQN.lock().unwrap().insert(format!("{}Base.Constructor", definition.name), value.clone());
+            DEFINITION_FQN.lock().unwrap().insert(constructor_class_name.clone(), value);
           }
         }
         _ => continue
@@ -1282,8 +1355,8 @@ fn main() {
 
         paths.insert("Dictionary".to_owned(), "flash.utils.Dictionary".to_owned());
 
-        paths.insert("Byte".to_owned(), "int".to_owned());
-        paths.insert("Short".to_owned(), "int".to_owned());
+        paths.insert("Byte".to_owned(), "alternativa.types.Byte".to_owned());
+        paths.insert("Short".to_owned(), "alternativa.types.Short".to_owned());
         paths.insert("Long".to_owned(), "alternativa.types.Long".to_owned());
         paths.insert("Float".to_owned(), "alternativa.types.Float".to_owned());
         paths.insert("IGameObject".to_owned(), "platform.client.fp10.core.type.IGameObject".to_owned());

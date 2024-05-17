@@ -1207,7 +1207,7 @@ pub fn type_to_hl_codec(kind: &Type) -> String {
       let main = ty.value.0.to_owned();
       match main.as_str() {
         "List" => format!("new CollectionCodecInfo({},{},1)", type_to_hl_codec(&params[0]), if nullable.is_some() { "true" } else { "false" }),
-        "Map" => format!("new MapCodecInfo({},{},{},1)", type_to_hl_codec(&params[0]), type_to_hl_codec(&params[1]), if nullable.is_some() { "true" } else { "false" }),
+        "Map" => format!("new MapCodecInfo({},{},{})", type_to_hl_codec(&params[0]), type_to_hl_codec(&params[1]), if nullable.is_some() { "true" } else { "false" }),
         _ => todo!()
       }
     }

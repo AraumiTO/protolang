@@ -4,6 +4,7 @@ use regex::{escape, Regex};
 use tracing::{error, warn};
 
 use protolang_parser::hl::{Enum, Model, Type};
+use protolang_parser::type_to_hl_codec;
 
 use crate::{BUILTIN_FQN, convert_from_id, DEFINITION_FQN, REGEX_CACHE, get_types_from_generic};
 
@@ -277,12 +278,12 @@ pub fn generate_model_client_interface_actionscript_code(model: &Model, root_pac
   let mut imports = Vec::<String>::new();
   for method in &model.server_methods {
     for param in &method.params {
-      imports.append(&mut get_types_from_generic(&convert_type(&param.kind, root_package)));
+      imports.append(&mut get_types_from_generic(&convert_type_to_native_final(&convert_type(&param.kind, root_package))));
     }
   }
   for method in &model.client_methods {
     for param in &method.params {
-      imports.append(&mut get_types_from_generic(&convert_type(&param.kind, root_package)));
+      imports.append(&mut get_types_from_generic(&convert_type_to_native_final(&convert_type(&param.kind, root_package))));
     }
   }
   let imports = imports.iter().unique().map(|import| format!("  import {};", import)).join("\n");
@@ -297,7 +298,7 @@ pub fn generate_model_client_interface_actionscript_code(model: &Model, root_pac
   builder.push_str(&format!("  public interface I{}Base {{\n", class_name));
 
   for method in &model.client_methods {
-    let params = method.params.iter().map(|param| format!("{}:{}", param.name, convert_type(&param.kind, root_package))).join(", ");
+    let params = method.params.iter().map(|param| format!("{}:{}", param.name, convert_type_to_native_final(&convert_type(&param.kind, root_package)))).join(", ");
     builder.push_str(&format!(
       "    function {}({}) : void;\n",
       method.name,
@@ -327,7 +328,7 @@ pub fn generate_type_actionscript_code(type_def: &Type, root_package: Option<&st
 
   let mut imports = Vec::<String>::new();
   for field in &type_def.fields {
-    imports.append(&mut get_types_from_generic(&convert_type(&field.kind, root_package)));
+    imports.append(&mut get_types_from_generic(&convert_type_to_native_final(&convert_type(&field.kind, root_package))));
   }
   let imports = imports.iter().unique().map(|import| format!("  import {};", import)).join("\n");
   builder.push_str(&imports);
@@ -341,7 +342,7 @@ pub fn generate_type_actionscript_code(type_def: &Type, root_package: Option<&st
   builder.push_str(&format!("  public class {} {{\n", class_name));
 
   for field in &type_def.fields {
-    let native_type = convert_type(&field.kind, root_package);
+    let native_type = &convert_type_to_native_final(&convert_type(&field.kind, root_package));
     builder.push_str(&format!(
       "    private var _{}:{};\n",
       field.name,
@@ -354,7 +355,7 @@ pub fn generate_type_actionscript_code(type_def: &Type, root_package: Option<&st
 
   let mut params = Vec::new();
   for field in &type_def.fields {
-    let native_type = convert_type(&field.kind, root_package);
+    let native_type = convert_type_to_native_final(&convert_type(&field.kind, root_package));
     let default = match native_type.as_str() {
       "int" => "0",
       "Number" => "0",
@@ -372,7 +373,7 @@ pub fn generate_type_actionscript_code(type_def: &Type, root_package: Option<&st
   builder.push_str("\n");
 
   for field in &type_def.fields {
-    let native_type = convert_type(&field.kind, root_package);
+    let native_type = convert_type_to_native_final(&convert_type(&field.kind, root_package));
     builder.push_str(&format!("    public function get {}() : {} {{\n", field.name, native_type));
     builder.push_str(&format!("      return this._{};\n", field.name));
     builder.push_str("    }\n");
@@ -476,6 +477,178 @@ pub fn generate_enum_actionscript_code(enum_def: &Enum, root_package: Option<&st
   builder
 }
 
+pub fn generate_type_codec_actionscript_code(type_def: &Type, root_package: Option<&str>) -> String {
+  let mut builder = String::new();
+
+  let mut full_package = String::new();
+  full_package.push_str("_codec.");
+  if let Some(root_package) = root_package {
+    full_package.push_str(root_package);
+    full_package.push_str(".");
+  }
+  if let Some(meta) = type_def.meta.iter().find(|it| it.key == "client_package") {
+    full_package.push_str(&meta.value);
+  }
+  builder.push_str(&format!("package {} {{\n", full_package));
+
+  let class_name = if let Some(meta) = type_def.meta.iter().find(|it| it.key == "client_name") {
+    &meta.value
+  } else {
+    &type_def.name
+  };
+
+  builder.push_str(r#"  import alternativa.osgi.OSGi;
+  import alternativa.osgi.service.clientlog.IClientLog;
+  import alternativa.protocol.ICodec;
+  import alternativa.protocol.IProtocol;
+  import alternativa.protocol.ProtocolBuffer;
+  import alternativa.protocol.info.TypeCodecInfo;
+  import alternativa.protocol.info.EnumCodecInfo;
+  import alternativa.protocol.info.CollectionCodecInfo;
+  import alternativa.protocol.info.MapCodecInfo;
+"#);
+
+  let mut imports = Vec::<String>::new();
+  imports.append(&mut get_types_from_generic(&convert_type(class_name, root_package)));
+  for field in &type_def.fields {
+    imports.append(&mut get_types_from_generic(&convert_type(&field.kind, root_package)));
+  }
+  let imports = imports.iter().unique().map(|import| format!("  import {};", import)).join("\n");
+  builder.push_str(&imports);
+  builder.push_str("\n\n");
+
+  builder.push_str(&format!("  public class Codec{} implements ICodec {{\n", class_name));
+  builder.push_str("    public static var log:IClientLog = IClientLog(OSGi.getInstance().getService(IClientLog));\n\n");
+
+  for field in &type_def.fields {
+    builder.push_str(&format!(
+      "    private var codec_{}:ICodec;\n",
+      field.name
+    ));
+  }
+  if !type_def.fields.is_empty() {
+    builder.push_str("\n");
+  }
+
+  builder.push_str(&format!("    public function Codec{}() {{\n", class_name));
+  builder.push_str("      super();\n");
+  builder.push_str("    }\n");
+  builder.push_str("\n");
+
+  builder.push_str("    public function init(protocol:IProtocol) : void {\n");
+  for field in &type_def.fields {
+    // Do not call [convert_type_to_native_final] because int conflicts with Short and Byte
+    let native_codec = convert_type(&field.codec, root_package);
+    builder.push_str(&format!("      this.codec_{} = protocol.getCodec({});\n", field.name, native_codec));
+  }
+  builder.push_str("    }\n");
+  builder.push_str("\n");
+
+  builder.push_str("    public function decode(buffer:ProtocolBuffer) : Object {\n");
+  builder.push_str(&format!("      var result:{} = new {}();\n", convert_type_to_native_final(&convert_type(class_name, root_package)), convert_type_to_native_final(&convert_type(class_name, root_package))));
+  for field in &type_def.fields {
+    let native_type = convert_type_to_native_final(&convert_type(&field.kind, root_package));
+    builder.push_str(&format!("      result.{} = this.codec_{}.decode(buffer) as {};\n", field.name, field.name, native_type));
+  }
+  builder.push_str("      return result;\n");
+  builder.push_str("    }\n");
+  builder.push_str("\n");
+
+  builder.push_str("    public function encode(buffer:ProtocolBuffer, value:Object) : void {\n");
+  builder.push_str("      if(value == null) {\n");
+  builder.push_str("        throw new Error(\"Object is null. Use @ProtocolOptional annotation.\");\n");
+  builder.push_str("      }\n");
+  builder.push_str(&format!("      var castValue:{} = {}(value);\n", convert_type_to_native_final(&convert_type(class_name, root_package)), convert_type_to_native_final(&convert_type(class_name, root_package))));
+  for field in &type_def.fields {
+    let native_type = convert_type_to_native_final(&convert_type(&field.kind, root_package));
+    builder.push_str(&format!("      this.codec_{}.encode(buffer,castValue.{});\n", field.name, field.name));
+  }
+  builder.push_str("    }\n");
+  builder.push_str("\n");
+
+  builder.push_str("  }\n");
+
+  builder.push_str("}\n");
+
+  builder
+}
+
+pub fn generate_enum_codec_actionscript_code(enum_def: &Enum, root_package: Option<&str>) -> String {
+  let mut builder = String::new();
+
+  let mut full_package = String::new();
+  full_package.push_str("_codec.");
+  if let Some(root_package) = root_package {
+    full_package.push_str(root_package);
+    full_package.push_str(".");
+  }
+  if let Some(meta) = enum_def.meta.iter().find(|it| it.key == "client_package") {
+    full_package.push_str(&meta.value);
+  }
+  builder.push_str(&format!("package {} {{\n", full_package));
+
+  let class_name = if let Some(meta) = enum_def.meta.iter().find(|it| it.key == "client_name") {
+    &meta.value
+  } else {
+    &enum_def.name
+  };
+
+  builder.push_str(r#"  import alternativa.protocol.ICodec;
+  import alternativa.protocol.IProtocol;
+  import alternativa.protocol.ProtocolBuffer;
+"#);
+
+  let mut imports = Vec::<String>::new();
+  imports.append(&mut get_types_from_generic(&convert_type(class_name, root_package)));
+  let imports = imports.iter().unique().map(|import| format!("  import {};", import)).join("\n");
+  builder.push_str(&imports);
+  builder.push_str("\n\n");
+
+  builder.push_str(&format!("  public class Codec{} implements ICodec {{\n", class_name));
+
+  builder.push_str(&format!("    public function Codec{}() {{\n", class_name));
+  builder.push_str("      super();\n");
+  builder.push_str("    }\n");
+  builder.push_str("\n");
+
+  builder.push_str("    public function init(protocol:IProtocol) : void {\n");
+  builder.push_str("    }\n");
+  builder.push_str("\n");
+
+  let native_type = convert_type(class_name, root_package);
+  let native_repr = convert_type(&enum_def.repr, root_package);
+  builder.push_str("    public function decode(buffer:ProtocolBuffer) : Object {\n");
+  builder.push_str(&format!("      var result:{} = null;\n", native_type));
+  assert_eq!(enum_def.repr, "i32");
+  builder.push_str(&format!("      var repr:{} = {}(buffer.reader.readInt());\n", native_repr, native_repr));
+  builder.push_str("      switch(repr) {\n");
+  for variant in &enum_def.variants {
+    builder.push_str(&format!("        case {}:\n", variant.value));
+    builder.push_str(&format!("          result = {}.{};\n", native_type, variant.name));
+    builder.push_str("          break;\n");
+  }
+  builder.push_str("      }\n");
+  builder.push_str("      return result;\n");
+  builder.push_str("    }\n");
+  builder.push_str("\n");
+
+  builder.push_str("    public function encode(buffer:ProtocolBuffer, value:Object) : void {\n");
+  builder.push_str("      if(value == null) {\n");
+  builder.push_str("        throw new Error(\"Object is null. Use @ProtocolOptional annotation.\");\n");
+  builder.push_str("      }\n");
+  builder.push_str(&format!("      var repr:{} = {}(value);\n", native_repr, native_repr));
+  assert_eq!(enum_def.repr, "i32");
+  builder.push_str("      buffer.writer.writeInt(repr);\n");
+  builder.push_str("    }\n");
+  builder.push_str("\n");
+
+  builder.push_str("  }\n");
+
+  builder.push_str("}\n");
+
+  builder
+}
+
 lazy_static! {
   static ref REGEX_1: Regex = Regex::new(r"\bbool\b").unwrap();
   static ref REGEX_2: Regex = Regex::new(r"\bi8\b").unwrap();
@@ -489,6 +662,12 @@ lazy_static! {
   static ref REGEX_10: Regex = Regex::new(r"\bList<").unwrap();
   static ref REGEX_11: Regex = Regex::new(r"\bMap<.+>").unwrap();
   static ref REGEX_NULLABLE: Regex = Regex::new(r"\?").unwrap();
+
+  static ref REGEX_12: Regex = Regex::new(r"\balternativa\.types\.(Byte|Short)\b").unwrap();
+}
+
+pub fn convert_type_to_native_final(value: &str) -> String {
+  REGEX_12.replace_all(&value, "int").to_string()
 }
 
 pub fn convert_type(value: &str, root_package: Option<&str>) -> String {
