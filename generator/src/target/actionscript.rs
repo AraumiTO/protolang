@@ -664,10 +664,13 @@ lazy_static! {
   static ref REGEX_NULLABLE: Regex = Regex::new(r"\?").unwrap();
 
   static ref REGEX_12: Regex = Regex::new(r"\balternativa\.types\.(Byte|Short)\b").unwrap();
+  static ref REGEX_13: Regex = Regex::new(r"\balternativa\.types\.Float\b").unwrap();
 }
 
 pub fn convert_type_to_native_final(value: &str) -> String {
-  REGEX_12.replace_all(&value, "int").to_string()
+  let value = REGEX_12.replace_all(&value, "int");
+  let value = REGEX_13.replace_all(&value, "Number");
+  value.to_string()
 }
 
 pub fn convert_type(value: &str, root_package: Option<&str>) -> String {
