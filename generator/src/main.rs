@@ -1438,11 +1438,11 @@ fn get_path_module(input_root: &Path, relative_path: &Path) -> Option<(String, S
     if module_path.exists() {
       let module_name = some_module_dir.to_string_lossy().to_string();
       if module_name == "" {
-        info!("module \"root\" for {:?}", relative_path);
+        debug!("module \"root\" for {:?}", relative_path);
         return Some(("root".to_owned(), "".to_owned()));
       }
 
-      info!("module {:?} for {:?}", module_name, relative_path);
+      debug!("module {:?} for {:?}", module_name, relative_path);
       return Some((module_name, "".to_owned()));
     }
 

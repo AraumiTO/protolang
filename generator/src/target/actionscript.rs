@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use regex::{escape, Regex};
-use tracing::{error, warn};
+use tracing::{debug, error, warn};
 
 use protolang_parser::hl::{Enum, Model, Type};
 use protolang_parser::type_to_hl_codec;
@@ -711,7 +711,7 @@ pub fn convert_type(value: &str, root_package: Option<&str>) -> String {
     let old_value = value.clone();
     value = regex.replace_all(&value, fqn).to_string();
     if value != old_value {
-      warn!("replaced level 1 {old_value} -> {value}");
+      debug!("replaced level 1 {old_value} -> {value}");
     }
   }
 
@@ -729,7 +729,7 @@ pub fn convert_type(value: &str, root_package: Option<&str>) -> String {
     let old_value = value.clone();
     value = regex.replace_all(&value, fqn).to_string();
     if value != old_value {
-      warn!("replaced level 2 {old_value} -> {value}");
+      debug!("replaced level 2 {old_value} -> {value}");
     }
   }
 
