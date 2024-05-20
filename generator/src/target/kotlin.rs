@@ -4,7 +4,7 @@ use lazy_static::lazy_static;
 use protolang_parser::hl::{Enum, Model, Type};
 use regex::Regex;
 
-use crate::{BUILTIN_FQN, DEFINITION_FQN, REGEX_CACHE};
+use crate::{BUILTIN_FQN, DEFINITION_FQN, DEFINITION_FQN_2, REGEX_CACHE};
 
 /*
 @ModelInfo(6071565290933648049)
@@ -232,6 +232,19 @@ pub fn convert_type(value: &str, root_package: Option<&str>) -> String {
   }
 
   let definitions = DEFINITION_FQN.lock().unwrap();
+  for (simple_name, full_name) in definitions.iter() {
+    let mut full_package = String::new();
+    if let Some(root_package) = root_package {
+      full_package.push_str(root_package);
+      full_package.push_str(".");
+    }
+    full_package.push_str(full_name);
+
+    let regex = cache.entry(simple_name.to_owned()).or_insert_with(|| Regex::new(&format!(r"\b{}\b", simple_name)).unwrap());
+    value = regex.replace_all(&value, full_package).to_string();
+  }
+
+  let definitions = DEFINITION_FQN_2.lock().unwrap();
   for (simple_name, full_name) in definitions.iter() {
     let mut full_package = String::new();
     if let Some(root_package) = root_package {

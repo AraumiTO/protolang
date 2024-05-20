@@ -51,7 +51,8 @@ fn generate_kotlin(root_package: Option<&str>, module: Option<&str>, input_root:
     };
 
     if let Some(expected_module) = module {
-      if file_module != *expected_module {
+      let expected_modules = expected_module.split(',').collect_vec();
+      if !expected_modules.contains(&file_module.as_str()) {
         continue;
       }
     }
@@ -158,7 +159,8 @@ fn generate_actionscript(root_package: Option<&str>, module: Option<&str>, input
     };
 
     if let Some(expected_module) = module {
-      if file_module != *expected_module {
+      let expected_modules = expected_module.split(',').collect_vec();
+      if !expected_modules.contains(&file_module.as_str()) {
         continue;
       }
     }
@@ -463,6 +465,7 @@ pub static MODEL_TYPES: Lazy<Mutex<HashMap<String, String>>> = Lazy::new(|| Mute
 // file name -> path
 pub static BUILTIN_FQN: Lazy<Mutex<HashMap<String, String>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 pub static DEFINITION_FQN: Lazy<Mutex<HashMap<String, String>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+pub static DEFINITION_FQN_2: Lazy<Mutex<HashMap<String, String>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 pub static REGEX_CACHE: Lazy<Mutex<HashMap<String, Regex>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
 fn generate_definition_index(input_root: &Path) {
@@ -512,8 +515,8 @@ fn generate_definition_index(input_root: &Path) {
         _ => continue
       };
 
-      debug!("registered {} -> {}", simple_name, relative_path);
-      DEFINITION_FQN.lock().unwrap().insert(simple_name, relative_path);
+      debug!("registered definition {} -> {}", simple_name, relative_path);
+      DEFINITION_FQN_2.lock().unwrap().insert(simple_name, relative_path);
     }
   }
 
@@ -682,10 +685,11 @@ fn generate_constructor_index(input_root: &Path) {
             };
 
             let value = format!("{}.{}", constructor_package_name, constructor_class_name.clone());
-            debug!("registered {} -> {}", format!("{}Base.Constructor", definition.name), value);
-            DEFINITION_FQN.lock().unwrap().insert(format!("{}.Constructor", definition.name), value.clone());
-            DEFINITION_FQN.lock().unwrap().insert(format!("{}Base.Constructor", definition.name), value.clone());
-            DEFINITION_FQN.lock().unwrap().insert(constructor_class_name.clone(), value);
+            debug!("registered {} -> {}", format!("{}Base.Constructor", definition.name), constructor_class_name);
+            DEFINITION_FQN.lock().unwrap().insert(format!("{}.Constructor", definition.name), constructor_class_name.clone());
+            DEFINITION_FQN.lock().unwrap().insert(format!("{}Base.Constructor", definition.name), constructor_class_name.clone());
+            debug!("registered level 2 {} -> {}", constructor_class_name, value);
+            DEFINITION_FQN_2.lock().unwrap().insert(constructor_class_name.clone(), value);
           }
         }
         _ => continue

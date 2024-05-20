@@ -1212,8 +1212,28 @@ pub fn type_to_hl_codec(kind: &Type) -> String {
       }
     }
     Type::Nested { ty, inner } => {
-      warn!("unsupported type: {}", type_to_hl(&kind));
-      format!("%%{}%%", type_to_hl(&kind))
+      let base = match &**ty {
+        Type::Ident { ty, nullable } => {
+          ty.value.0.to_owned()
+        }
+        _ => todo!()
+      };
+      match &**inner {
+        Type::Ident { ty, nullable } => {
+          let name = ty.value.0.to_owned();
+          let info = if ENUM_TYPES.lock().unwrap().contains(&name) { "EnumCodecInfo" } else { "TypeCodecInfo" };
+          format!("new {}({}.{},{})", info, base, name, if nullable.is_some() { "true" } else { "false" })
+        }
+        Type::Generic { ty, nullable, params } => {
+          let main = ty.value.0.to_owned();
+          match main.as_str() {
+            "List" => format!("new CollectionCodecInfo({}.{},{},1)", type_to_hl_codec(&params[0]), base, if nullable.is_some() { "true" } else { "false" }),
+            "Map" => format!("new MapCodecInfo({}.{},{},{})", type_to_hl_codec(&params[0]), base, type_to_hl_codec(&params[1]), if nullable.is_some() { "true" } else { "false" }),
+            _ => todo!()
+          }
+        }
+        _ => todo!()
+      }
     }
   }
 }

@@ -6,7 +6,7 @@ use tracing::{error, warn};
 use protolang_parser::hl::{Enum, Model, Type};
 use protolang_parser::type_to_hl_codec;
 
-use crate::{BUILTIN_FQN, convert_from_id, DEFINITION_FQN, REGEX_CACHE, get_types_from_generic};
+use crate::{BUILTIN_FQN, convert_from_id, DEFINITION_FQN, REGEX_CACHE, get_types_from_generic, DEFINITION_FQN_2};
 
 pub fn generate_model_server_actionscript_code(model: &Model, root_package: Option<&str>) -> String {
   let mut builder = String::new();
@@ -695,7 +695,6 @@ pub fn convert_type(value: &str, root_package: Option<&str>) -> String {
   }
 
   let definitions = DEFINITION_FQN.lock().unwrap();
-  let mut count = 0;
   for (simple_name, full_name) in definitions.iter() {
     let mut fqn = String::new();
     if let Some(root_package) = root_package {
@@ -705,16 +704,29 @@ pub fn convert_type(value: &str, root_package: Option<&str>) -> String {
     fqn.push_str(full_name);
 
     // Replace all "ShortName" with "fqn.FullName"
-    let regex = cache.entry(simple_name.to_owned()).or_insert_with(|| Regex::new(&format!(r"\b{}\b", escape(simple_name))).unwrap());
+    let regex = cache.entry(format!("{}.level1", simple_name)).or_insert_with(|| Regex::new(&format!(r"\b{}\b", escape(simple_name))).unwrap());
     let old_value = value.clone();
     value = regex.replace_all(&value, fqn).to_string();
     if value != old_value {
-      count += 1;
+      warn!("replaced level 1 {old_value} -> {value}");
+    }
+  }
 
-      warn!("replaced {count}");
-      warn!("replaced {old_value} -> {value}");
-      break;
-      if count > 1 {}
+  let definitions = DEFINITION_FQN_2.lock().unwrap();
+  for (simple_name, full_name) in definitions.iter() {
+    let mut fqn = String::new();
+    if let Some(root_package) = root_package {
+      fqn.push_str(root_package);
+      fqn.push_str(".");
+    }
+    fqn.push_str(full_name);
+
+    // Replace all "ShortName" with "fqn.FullName"
+    let regex = cache.entry(format!("{}.level2", simple_name)).or_insert_with(|| Regex::new(&format!(r"\b{}\b", escape(simple_name))).unwrap());
+    let old_value = value.clone();
+    value = regex.replace_all(&value, fqn).to_string();
+    if value != old_value {
+      warn!("replaced level 2 {old_value} -> {value}");
     }
   }
 
