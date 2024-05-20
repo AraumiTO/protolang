@@ -193,62 +193,67 @@ fn generate_actionscript(root_package: Option<&str>, module: Option<&str>, input
         let definition = model_to_definition(model).unwrap();
         debug!("{:?}", definition);
 
-        if let Some(constructor) = definition.constructor.as_ref() {
-          let type_def = convert_constructor_to_type(constructor.to_owned());
-          let client_package = if let Some(meta) = type_def.meta.iter().find(|it| it.key == "client_package") {
-            &meta.value
-          } else {
-            todo!()
-          };
+        'ctor: {
+          if let Some(constructor) = definition.constructor.as_ref() {
+            debug!("shitman {:?}", definition.name);
+            let type_def = convert_constructor_to_type(constructor.to_owned());
+            let client_package = if let Some(meta) = type_def.meta.iter().find(|it| it.key == "client_package") {
+              &meta.value
+            } else {
+              todo!()
+            };
 
-          let class_name = if let Some(meta) = type_def.meta.iter().find(|it| it.key == "client_name") {
-            &meta.value
-          } else {
-            &type_def.name
-          };
+            let class_name = if let Some(meta) = type_def.meta.iter().find(|it| it.key == "client_name") {
+              &meta.value
+            } else {
+              &type_def.name
+            };
 
-          if EXISTING_TYPES.lock().unwrap().contains(class_name) {
-            continue;
-          }
-          EXISTING_TYPES.lock().unwrap().insert(class_name.to_owned());
-
-          // type
-          {
-            let code = generate_type_actionscript_code(&type_def, root_package);
-            let package = client_package.replace('.', "/");
-            let relative_path = format!("{}/{}.as", package, class_name);
-            let output_path = output_root.join(&relative_path);
-            info!("generate actionscript code into {:?}", output_path);
-
-            let mut full_package = String::new();
-            if let Some(root_package) = root_package {
-              full_package.push_str(root_package);
-              full_package.push_str(".");
+            if EXISTING_TYPES.lock().unwrap().contains(class_name) {
+              debug!("skip {} ({}) due to already existing", class_name, definition.name);
+              break 'ctor;
             }
-            full_package.push_str(&package);
+            debug!("add {} ({}) to existing types", class_name, definition.name);
+            EXISTING_TYPES.lock().unwrap().insert(class_name.to_owned());
 
-            let mut wrapped_code = String::new();
-            wrapped_code.push_str(&code);
-            debug!("{}", wrapped_code);
+            // type
+            {
+              let code = generate_type_actionscript_code(&type_def, root_package);
+              let package = client_package.replace('.', "/");
+              let relative_path = format!("{}/{}.as", package, class_name);
+              let output_path = output_root.join(&relative_path);
+              info!("generate actionscript code into {:?}", output_path);
 
-            fs::create_dir_all(output_path.parent().unwrap()).unwrap();
-            fs::write(output_path, wrapped_code).unwrap();
-          }
+              let mut full_package = String::new();
+              if let Some(root_package) = root_package {
+                full_package.push_str(root_package);
+                full_package.push_str(".");
+              }
+              full_package.push_str(&package);
 
-          // type codec
-          {
-            let code = generate_type_codec_actionscript_code(&type_def, root_package);
-            let package = client_package.replace('.', "/");
-            let relative_path = format!("_codec/{}/Codec{}.as", package, class_name);
-            let output_path = output_root.join(&relative_path);
-            info!("generate actionscript code into {:?}", output_path);
+              let mut wrapped_code = String::new();
+              wrapped_code.push_str(&code);
+              debug!("{}", wrapped_code);
 
-            let mut wrapped_code = String::new();
-            wrapped_code.push_str(&code);
-            debug!("{}", wrapped_code);
+              fs::create_dir_all(output_path.parent().unwrap()).unwrap();
+              fs::write(output_path, wrapped_code).unwrap();
+            }
 
-            fs::create_dir_all(output_path.parent().unwrap()).unwrap();
-            fs::write(output_path, wrapped_code).unwrap();
+            // type codec
+            {
+              let code = generate_type_codec_actionscript_code(&type_def, root_package);
+              let package = client_package.replace('.', "/");
+              let relative_path = format!("_codec/{}/Codec{}.as", package, class_name);
+              let output_path = output_root.join(&relative_path);
+              info!("generate actionscript code into {:?}", output_path);
+
+              let mut wrapped_code = String::new();
+              wrapped_code.push_str(&code);
+              debug!("{}", wrapped_code);
+
+              fs::create_dir_all(output_path.parent().unwrap()).unwrap();
+              fs::write(output_path, wrapped_code).unwrap();
+            }
           }
         }
 
