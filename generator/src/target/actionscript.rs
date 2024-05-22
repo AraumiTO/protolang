@@ -95,7 +95,7 @@ pub fn generate_model_server_actionscript_code(model: &Model, root_package: Opti
   builder.push_str("\n");
 
   for method in &model.server_methods {
-    let params = method.params.iter().map(|param| format!("{}:{}", param.name, convert_type(&param.kind, root_package))).join(", ");
+    let params = method.params.iter().map(|param| format!("{}:{}", param.name, convert_type_to_native_final(&convert_type(&param.kind, root_package)))).join(", ");
     builder.push_str(&format!("    public function {}({}) : void {{\n", method.name, params));
     builder.push_str("      ByteArray(this.protocolBuffer.writer).position = 0;\n");
     builder.push_str("      ByteArray(this.protocolBuffer.writer).length = 0;\n");
@@ -239,7 +239,7 @@ pub fn generate_model_base_actionscript_code(model: &Model, root_package: Option
   for method in &model.client_methods {
     let mut params = Vec::new();
     for param in &method.params {
-      let native_type = convert_type(&param.kind, root_package);
+      let native_type = convert_type_to_native_final(&convert_type(&param.kind, root_package));
       params.push(format!("{}(this._{}_{}Codec.decode(buffer))", native_type, method.name, param.name));
     }
 
