@@ -6,7 +6,7 @@ use std::{fs, i64, path::Path};
 use std::borrow::ToOwned;
 use std::ffi::OsStr;
 use std::ops::Index;
-use std::path::{Component, PathBuf};
+use std::path::{Component, PathBuf, MAIN_SEPARATOR_STR};
 use std::sync::Mutex;
 use clap::{Parser, Subcommand};
 use itertools::Itertools;
@@ -106,7 +106,7 @@ fn generate_kotlin(root_package: Option<&str>, module: Option<&str>, input_root:
       // let relative_path = relative_path.strip_prefix(&module_root).unwrap();
       let relative_path = relative_path.with_file_name(relative_path.file_name().unwrap().to_string_lossy().replace(".proto", ".generated.kt"));
       let output_path = output_root.join(&relative_path);
-      let package = relative_path.parent().unwrap().to_string_lossy().replace('/', ".");
+      let package = relative_path.parent().unwrap().to_string_lossy().replace(MAIN_SEPARATOR_STR, ".");
       info!("generate kotlin code into {:?}", output_path);
 
       let mut full_package = String::new();
@@ -262,7 +262,7 @@ fn generate_actionscript(root_package: Option<&str>, module: Option<&str>, input
 
           let relative_path = relative_path.with_file_name(relative_path.file_name().unwrap().to_string_lossy().replace(".proto", "Server.as"));
           let output_path = output_root.join(&relative_path);
-          let package = relative_path.parent().unwrap().to_string_lossy().replace('/', ".");
+          let package = relative_path.parent().unwrap().to_string_lossy().replace(MAIN_SEPARATOR_STR, ".");
           info!("generate actionscript code into {:?}", output_path);
 
           let mut full_package = String::new();
@@ -285,7 +285,7 @@ fn generate_actionscript(root_package: Option<&str>, module: Option<&str>, input
 
           let relative_path = relative_path.with_file_name(relative_path.file_name().unwrap().to_string_lossy().replace(".proto", "Base.as"));
           let output_path = output_root.join(&relative_path);
-          let package = relative_path.parent().unwrap().to_string_lossy().replace('/', ".");
+          let package = relative_path.parent().unwrap().to_string_lossy().replace(MAIN_SEPARATOR_STR, ".");
           info!("generate actionscript code into {:?}", output_path);
 
           let mut full_package = String::new();
@@ -308,7 +308,7 @@ fn generate_actionscript(root_package: Option<&str>, module: Option<&str>, input
 
           let relative_path = relative_path.with_file_name("I".to_owned() + &*relative_path.file_name().unwrap().to_string_lossy().replace(".proto", "Base.as"));
           let output_path = output_root.join(&relative_path);
-          let package = relative_path.parent().unwrap().to_string_lossy().replace('/', ".");
+          let package = relative_path.parent().unwrap().to_string_lossy().replace(MAIN_SEPARATOR_STR, ".");
           info!("generate actionscript code into {:?}", output_path);
 
           let mut full_package = String::new();
@@ -367,7 +367,7 @@ fn generate_actionscript(root_package: Option<&str>, module: Option<&str>, input
         // let relative_path = relative_path.strip_prefix(&module_root).unwrap();
         let relative_path = relative_path.with_file_name(relative_path.file_name().unwrap().to_string_lossy().replace(".proto", ".as"));
         let output_path = output_root.join(&relative_path);
-        let package = relative_path.parent().unwrap().to_string_lossy().replace('/', ".");
+        let package = relative_path.parent().unwrap().to_string_lossy().replace(MAIN_SEPARATOR_STR, ".");
         info!("generate type actionscript code into {:?}", output_path);
 
         let mut full_package = String::new();
@@ -499,7 +499,7 @@ fn generate_definition_index(input_root: &Path) {
     let mut iter = itertools::multipeek(&tokens);
     let ast = protolang_parser::parse_program(&mut iter).unwrap();
 
-    let relative_path = relative_path.to_string_lossy().replace(".proto", "").replace('/', ".");
+    let relative_path = relative_path.to_string_lossy().replace(".proto", "").replace(MAIN_SEPARATOR_STR, ".");
 
     for item in &ast.body {
       let relative_path = relative_path.clone();
@@ -670,7 +670,7 @@ fn generate_constructor_index(input_root: &Path) {
     let mut iter = itertools::multipeek(&tokens);
     let ast = protolang_parser::parse_program(&mut iter).unwrap();
 
-    let relative_path = relative_path.to_string_lossy().replace(".proto", "").replace('/', ".");
+    let relative_path = relative_path.to_string_lossy().replace(".proto", "").replace(MAIN_SEPARATOR_STR, ".");
 
     for item in &ast.body {
       let relative_path = relative_path.clone();
@@ -899,8 +899,8 @@ fn generate_protolang_model(input_root: &Path, output_root: &Path) {
       meta: vec![
         Meta {
           key: "client_package".to_owned(),
-          // value: format!("{}:{}", project, convert_path_to_definition(&relative_model_base_path).parent().unwrap().to_string_lossy().replace('/', "."))
-          value: convert_path_to_definition(&relative_model_base_path).parent().unwrap().to_string_lossy().replace('/', ".")
+          // value: format!("{}:{}", project, convert_path_to_definition(&relative_model_base_path).parent().unwrap().to_string_lossy().replace(MAIN_SEPARATOR_STR, "."))
+          value: convert_path_to_definition(&relative_model_base_path).parent().unwrap().to_string_lossy().replace(MAIN_SEPARATOR_STR, ".")
         },
         Meta { key: "client_name".to_owned(), value: model_name.to_owned() },
       ],
@@ -1070,7 +1070,7 @@ fn generate_protolang_type(name: &str, input_root: &Path, output_root: &Path) ->
         comments: vec![],
       }).collect_vec(),
       meta: vec![
-        Meta { key: "client_package".to_owned(), value: convert_path_to_definition(&relative_path).parent().unwrap().to_string_lossy().replace('/', ".") },
+        Meta { key: "client_package".to_owned(), value: convert_path_to_definition(&relative_path).parent().unwrap().to_string_lossy().replace(MAIN_SEPARATOR_STR, ".") },
         Meta { key: "client_name".to_owned(), value: name.to_owned() },
       ],
       comments: vec![
@@ -1162,7 +1162,7 @@ fn generate_protolang_enum(name: &str, input_root: &Path) -> Option<(PathBuf, hl
         comments: vec![],
       }).collect_vec(),
       meta: vec![
-        Meta { key: "client_package".to_owned(), value: convert_path_to_definition(&relative_path).parent().unwrap().to_string_lossy().replace('/', ".") },
+        Meta { key: "client_package".to_owned(), value: convert_path_to_definition(&relative_path).parent().unwrap().to_string_lossy().replace(MAIN_SEPARATOR_STR, ".") },
         Meta { key: "client_name".to_owned(), value: name.to_owned() }
       ],
       comments: vec![
