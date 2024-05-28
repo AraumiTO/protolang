@@ -1379,7 +1379,7 @@ fn main() {
         paths.insert("Resource".to_owned(), "platform.client.fp10.core.resource.Resource".to_owned());
         paths.insert("SoundResource".to_owned(), "platform.client.fp10.core.resource.types.SoundResource".to_owned());
         paths.insert("MapResource".to_owned(), "projects.tanks.clients.flash.resources.resource.MapResource".to_owned());
-        paths.insert("ProplibResource".to_owned(), "projects.tanks.clients.flash.resources.resource.ProplibResource".to_owned());
+        paths.insert("ProplibResource".to_owned(), "projects.tanks.clients.flash.resources.resource.PropLibResource".to_owned());
         paths.insert("TextureResource".to_owned(), "platform.client.fp10.core.resource.types.TextureResource".to_owned());
         paths.insert("ImageResource".to_owned(), "platform.client.fp10.core.resource.types.ImageResource".to_owned());
         paths.insert("MultiframeTextureResource".to_owned(), "platform.client.fp10.core.resource.types.MultiframeTextureResource".to_owned());
