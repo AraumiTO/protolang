@@ -636,7 +636,7 @@ pub fn generate_enum_codec_actionscript_code(enum_def: &Enum, root_package: Opti
   builder.push_str("      if(value == null) {\n");
   builder.push_str("        throw new Error(\"Object is null. Use @ProtocolOptional annotation.\");\n");
   builder.push_str("      }\n");
-  builder.push_str(&format!("      var repr:{} = {}(value);\n", native_repr, native_repr));
+  builder.push_str(&format!("      var repr:{} = {}(value.value);\n", native_repr, native_repr));
   assert_eq!(enum_def.repr, "i32");
   builder.push_str("      buffer.writer.writeInt(repr);\n");
   builder.push_str("    }\n");
