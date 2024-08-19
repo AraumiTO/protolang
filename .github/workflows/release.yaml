@@ -15,14 +15,18 @@ jobs:
             target: x86_64-unknown-linux-gnu
             bin: protolang-generator
             name: protolang-linux-x86_64
-            command: build
 
           - os_name: Windows-x86_64
             os: windows-latest
             target: x86_64-pc-windows-msvc
             bin: protolang-generator.exe
             name: protolang-win-x86_64.exe
-            command: both
+
+          - os_name: MacOS_aarch64
+            os: macos-latest
+            target: aarch64-apple-darwin
+            bin: protolang-generator
+            name: protolang-darwin-aarch64
 
     steps:
       - uses: actions/checkout@v4
